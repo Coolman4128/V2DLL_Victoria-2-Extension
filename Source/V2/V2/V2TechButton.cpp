@@ -37,7 +37,7 @@
 // "у кого-то старая DLL" — сравнить эту строку в логах перед сетевой
 // игрой.
 // CLAUDE МЕНЯЙ ВЕРСИЮ ПРИ КАЖДОЙ ПРАВКЕ ФАЙЛА
-#define MOD_VERSION "5.56"
+#define MOD_VERSION "5.59"
 
 // Настройки ниже читаются из v2dll_settings.ini рядом с exe при
 // каждом запуске игры. Если файла ещё нет, он создаётся со
@@ -113,6 +113,15 @@ struct Settings
     // rules factory_priority = no, а при delete_factory_if_no_input = yes; патч переключает на
     // factory_priority = no.
     bool patchFactoryPriorityByRule  = true;
+    // PATCH_POP_CARD_STRATA_MODIFIERS: количества нужд в карточке попа учитывают модификаторы
+    // страны poor_/middle_/rich_ life/everyday/luxury_needs (только отображение).
+    bool patchPopCardStrataMods      = true;
+    // PATCH_BUDGET_PAYOUT_BY_NEEDS: выплаты из бюджета типу попов (education/administration/military)
+    // умножаются на (1 + модификатор poor_/middle_/rich_ *_needs) его страты и класса нужд.
+    bool patchBudgetPayoutByNeeds    = true;
+    // PATCH_FIX_STRATA_NEEDS_MODIFIERS: исправление ванильной путаницы middle/rich у модификаторов
+    // *_life_needs и *_everyday_needs (значение попадало в слот другой страты).
+    bool patchFixStrataNeedsMods     = true;
     // Окно фабрик: не показывать в верхнем ряду фильтров кнопки товаров,
     // чьё имя начинается на "raw_" (см. ComputeGoodsFilterPos).
     bool hideRawGoodsFilter          = true;
@@ -4400,6 +4409,9 @@ static void ApplySetting(const char* key, const char* value)
     if (_stricmp(key, "PATCH_FACTORY_MIN_WAGE") == 0)          { g_settings.patchFactoryMinWage         = v; return; }
     if (_stricmp(key, "PATCH_NEEDS_HONEST_UI") == 0)           { g_settings.patchNeedsHonestUi          = v; return; }
     if (_stricmp(key, "PATCH_FACTORY_PRIORITY_BY_RULE") == 0)  { g_settings.patchFactoryPriorityByRule  = v; return; }
+    if (_stricmp(key, "PATCH_POP_CARD_STRATA_MODIFIERS") == 0) { g_settings.patchPopCardStrataMods      = v; return; }
+    if (_stricmp(key, "PATCH_BUDGET_PAYOUT_BY_NEEDS") == 0)    { g_settings.patchBudgetPayoutByNeeds    = v; return; }
+    if (_stricmp(key, "PATCH_FIX_STRATA_NEEDS_MODIFIERS") == 0) { g_settings.patchFixStrataNeedsMods    = v; return; }
     if (_stricmp(key, "PROD_TYPE_GATE_ALLOW_ALL") == 0)         { g_settings.prodTypeGateAllowAll        = v; return; }
     if (_stricmp(key, "PATCH_EXPONENTIAL_PRICE_DELTA") == 0)    { g_settings.patchExponentialPriceDelta  = v; return; }
     if (_stricmp(key, "PATCH_COMBAT_ROLL") == 0)                { g_settings.patchCombatRoll             = v; return; }
@@ -4570,7 +4582,8 @@ static void WriteDefaultSettings(const char* path)
         g_settings.combatRollMin,
         g_settings.combatRollMax,
         (int)FindExePatchEnabled("combat_loss_popup_all"),
-        (int)g_settings.patchReserveFrontline);
+        (int)g_settings.patchReserveFrontline,
+        (int)g_settings.patchSecondLineSplash);
 
     char extraWhitelistJoined[MAX_EXTRA_WHITELIST * EXTRA_WHITELIST_NAME_MAX] = "";
     for (int w = 0; w < g_extraWhitelistCount; ++w)
@@ -4603,6 +4616,9 @@ static void WriteDefaultSettings(const char* path)
         "PATCH_FACTORY_MIN_WAGE=%d\n"
         "PATCH_NEEDS_HONEST_UI=%d\n"
         "PATCH_FACTORY_PRIORITY_BY_RULE=%d\n"
+        "PATCH_POP_CARD_STRATA_MODIFIERS=%d\n"
+        "PATCH_BUDGET_PAYOUT_BY_NEEDS=%d\n"
+        "PATCH_FIX_STRATA_NEEDS_MODIFIERS=%d\n"
         "\n",
         (int)g_settings.priceDelta,
         (int)g_settings.patchExponentialPriceDelta,
@@ -4624,7 +4640,10 @@ static void WriteDefaultSettings(const char* path)
         (int)g_settings.patchAiExpandStaffing,
         (int)g_settings.patchFactoryMinWage,
         (int)g_settings.patchNeedsHonestUi,
-        (int)g_settings.patchFactoryPriorityByRule);
+        (int)g_settings.patchFactoryPriorityByRule,
+        (int)g_settings.patchPopCardStrataMods,
+        (int)g_settings.patchBudgetPayoutByNeeds,
+        (int)g_settings.patchFixStrataNeedsMods);
 
     fprintf(f,
         "; UI\n"
@@ -10869,28 +10888,6 @@ static void __cdecl ReserveDeployNew(unsigned char* side, int enemySide)
     if (width > 31)
         width = 31;
 
-    // Замена пехоты/кавалерии во второй линии на support-юнитов из
-    // резервов. Ванильный b840 при переполнении первой линии оставлял
-    // пехоту в слотах второй линии, из-за чего резервные артиллерия и
-    // самолёты не могли туда встать. Пехота возвращается в резерв и
-    // попадёт во вторую линию, когда support в резерве кончится.
-    for (int k = 0; k < width; ++k)
-    {
-        int off = (k & 1) ? -((k + 1) / 2) : (k / 2);
-        int idx = off + 16;
-        if (idx < 0 || idx > 30)
-            continue;
-        unsigned char* occupant = (unsigned char*)back[idx];
-        if (!occupant || ReserveUnitIsSupport(occupant))
-            continue;
-        unsigned char* snode = ReserveTakeNode(side, true, 0);
-        if (!snode)
-            break;
-        AppendReserveNode(side, occupant);
-        back[idx] = *(void**)snode;
-        ReserveDropNode(side, snode);
-    }
-
     // Фаза 1: оба слота пусты, у врага в этом направлении кто-то есть.
     for (int k = 0; k < width; ++k)
     {
@@ -10982,8 +10979,30 @@ static bool InstallReserveFrontline()
     memcpy(hook, patch, sizeof(patch));
     VirtualProtect(hook, 5, oldProtect, &oldProtect);
 
-    Log("ReserveFrontline: установлен на rva %06X (резервы во вторую линию: сначала support, пехота - когда support кончился)",
+    // Вставшая в линию бригада не двигается назад: отключаем откат
+    // ослабленных (сила/орг) и безцельных бригад из первой линии в
+    // резерв в FUN_0059aef0. Вперёд со второй линии (b0e0) - ваниль.
+    DWORD stayRvas[3] = { 0x19AFF3, 0x19AFFC, 0x19B026 };
+    static const unsigned char staySig[3][2] = { { 0x7C, 0x33 }, { 0x7C, 0x2A }, { 0x75, 0x54 } };
+    static const unsigned char stayNew[3][2] = { { 0x90, 0x90 }, { 0x90, 0x90 }, { 0xEB, 0x54 } };
+    int stayOk = 0;
+    for (int s = 0; s < 3; ++s)
+    {
+        unsigned char* site = (unsigned char*)(g_base + stayRvas[s]);
+        if (!VirtualProtect(site, 2, PAGE_EXECUTE_READWRITE, &oldProtect))
+            continue;
+        if (memcmp(site, staySig[s], 2) == 0)
+        {
+            memcpy(site, stayNew[s], 2);
+            ++stayOk;
+        }
+        VirtualProtect(site, 2, oldProtect, &oldProtect);
+    }
+
+    Log("ReserveFrontline: установлен на rva %06X (резервы во вторую линию: сначала support, пехота - когда support кончился); stay-патчи %d/3",
         RVA_RESERVE_DEPLOY);
+    if (stayOk != 3)
+        Log("ReserveStay: предупреждение - применено только %d из 3 патчей", stayOk);
     return true;
 }
 
@@ -11002,23 +11021,45 @@ static bool InstallReserveFrontline()
 // Атаки из первой линии (множитель ровно 1000) не расщепляются.
 // ---------------------------------------------------------------
 
+static const DWORD RVA_SPLASH_ENTRY  = 0x19A8E0;
 static const DWORD RVA_SPLASH_HOOK   = 0x19AC8A;
 static const DWORD RVA_SPLASH_RESUME = 0x19AC93;
 
 static const unsigned char SPLASH_HOOK_SIG[9] =
 { 0x8B, 0x55, 0x08, 0x01, 0x53, 0x70, 0x01, 0x43, 0x6C };
+static const unsigned char SPLASH_ENTRY_SIG[6] =
+{ 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x14 };
 
 static DWORD g_splashResumeAddr = 0;
+static DWORD g_splashEnemySide  = 0;
+static DWORD g_splashMult       = 0;
+static DWORD g_splashTrampoline = 0;
+static int   g_splashEntryLogs  = 0;
+static int   g_splashApplyLogs  = 0;
+static bool  g_splashSplitValid = false;
 
 static void __cdecl SecondLineSplashApply(
     int target, int orgDmg, int strDmg, int enemySide, int attackMult)
 {
+    bool logIt = (g_splashApplyLogs < 40) || (g_splashApplyLogs % 100 == 0);
+    ++g_splashApplyLogs;
+    int rearDbg = 0;
+    if (enemySide && !(g_fnIsBadReadPtr && g_fnIsBadReadPtr((void*)enemySide, 0x170)))
+    {
+        int* eFront = (int*)(enemySide + 0x6C);
+        int* eBack  = (int*)(enemySide + 0xEC);
+        for (int i = 0; i < 32; ++i)
+            if (eFront[i] == target) { rearDbg = eBack[i]; break; }
+    }
+    if (logIt)
+        Log("SplashApply#%d: mult=%d target=%08X org=%d str=%d rear=%08X",
+            g_splashApplyLogs, attackMult, target, orgDmg, strDmg, rearDbg);
     // v5.54: вылет lua51.dll+0x104A0 (чтение enemySide+0x6C при enemySide==0,
     // 1836-01-08, боевой день): [EBP+0xC] в FUN_0059A8E0 бывает нулевым/не
     // стороной боя (другой вызывающий?). Тогда расщеплять нечем - бьём только
     // цель, как у атак первой линии. Заодно проверяем читаемость обеих
     // таблиц стороны (front +0x6C..+0xEC, back +0xEC..+0x16C) и тыловой юнит.
-    if (attackMult == 1000 || !enemySide ||
+    if (attackMult == 1000 || !g_splashSplitValid || !enemySide ||
         (g_fnIsBadReadPtr && g_fnIsBadReadPtr((void*)enemySide, 0x170)))
     {
         *(int*)(target + 0x70) += orgDmg;
@@ -11051,19 +11092,73 @@ static void __cdecl SecondLineSplashApply(
     }
 }
 
+// Диагностика цепочки урона (лог первых 40 вызовов + каждый сотый):
+// вызывается ли a8e0, какие аргументы, и что с гейтом side+0x74/+0xA4.
+static void __cdecl SplashEntryCapture(
+    int enemySide, int thisSide, int slot, int mult)
+{
+    g_splashEnemySide = enemySide;
+    g_splashMult = mult;
+    g_splashSplitValid = false;
+
+    bool logIt = (g_splashEntryLogs < 40) || (g_splashEntryLogs % 100 == 0);
+    ++g_splashEntryLogs;
+    if (!logIt)
+        return;
+
+    // ECX на входе бывает не стороной боя (осадный поток: маленький
+    // объект, 1836-01-08 краш на чтении [0x10+0x74]=0x84) - без защиты
+    // падаем сами раньше, чем гейт в ванильном коде.
+    if (thisSide && !(g_fnIsBadReadPtr && g_fnIsBadReadPtr((void*)thisSide, 0x78)))
+        g_splashSplitValid = true;
+    int gate74 = 0;
+    int gateA4 = 0;
+    if (thisSide && !(g_fnIsBadReadPtr && g_fnIsBadReadPtr((void*)thisSide, 0x78)))
+    {
+        gate74 = *(int*)(thisSide + 0x74);
+        if (gate74 && !(g_fnIsBadReadPtr && g_fnIsBadReadPtr((void*)gate74, 0xA8)))
+            gateA4 = *(int*)(gate74 + 0xA4);
+    }
+    Log("SplashEntry#%d: this=%08X enemy=%08X slot=%d mult=%d gate74=%08X gateA4=%d",
+        g_splashEntryLogs, thisSide, enemySide, slot, mult, gate74, gateA4);
+}
+
+// Захват на входе a8e0: сторона противника и множитель атаки. В хвосте
+// функции читать их из [EBP+C]/[EBP+14] нельзя - компилятор
+// переиспользует слоты параметров под временные переменные.
+__declspec(naked) static void SplashEntryThunk()
+{
+    __asm
+    {
+        pushad
+        mov eax, [esp + 40]     // параметр 2 - сторона противника
+        mov edx, [esp + 44]     // параметр 3 - слот
+        mov edi, [esp + 48]     // параметр 4 - множитель
+        mov ecx, [esp + 4]      // this (ECX на входе a8e0)
+        push edi
+        push edx
+        push ecx
+        push eax
+        call SplashEntryCapture
+        add esp, 16
+        popad
+        jmp dword ptr [g_splashTrampoline]
+    }
+}
+
+// Хвост a8e0 с расщеплением. Орг-урон лежит в [EBP+8] (компилятор
+// сохранил его туда сам, инструкция MOV EDX,[EBP+8] перезаписана
+// нашим JMP), урон по силе - в EAX, цель - в EBX.
 __declspec(naked) static void SecondLineSplashThunk()
 {
     __asm
     {
         pushad
-        mov eax, [esp + 0]      ; EAX = урон по силе
-        mov ecx, [esp + 8]      ; EDX = орг-урон
-        mov edx, ecx
-        mov ecx, [esp + 12]     ; EBX = цель
-        mov edi, [ebp + 0x14]   ; множитель атаки
-        push edi
-        mov edi, [ebp + 0xC]    ; сторона противника
-        push edi
+        mov edx, [ebp + 8]      // орг-урон
+        mov eax, [esp + 0]      // урон по силе (сохранённый EAX)
+        mov ecx, [esp + 12]     // цель (сохранённый EBX)
+        push g_splashMult
+        push g_splashEnemySide
         push eax
         push edx
         push ecx
@@ -11076,18 +11171,47 @@ __declspec(naked) static void SecondLineSplashThunk()
 
 static bool InstallSecondLineSplash()
 {
+    // ВРЕМЕННО отключён: FUN_0059a8e0 оказалась не применением урона
+    // полку, а накоплением "вклада" юнита в боевой буфер на стеке
+    // (target = адрес буфера, один на всех атакующих). Хук ломал цепочку
+    // применения урона. См. v2_battle_re\README_БОЕВЫЕ_ЛИНИИ.md, шаг 6.
+    Log("SecondLineSplash: отключён (неверно определена функция урона)");
+    return false;
+
+    unsigned char* entry = (unsigned char*)(g_base + RVA_SPLASH_ENTRY);
     unsigned char* hook = (unsigned char*)(g_base + RVA_SPLASH_HOOK);
 
-    if (memcmp(hook, SPLASH_HOOK_SIG, sizeof(SPLASH_HOOK_SIG)) != 0)
+    if (memcmp(entry, SPLASH_ENTRY_SIG, sizeof(SPLASH_ENTRY_SIG)) != 0
+        || memcmp(hook, SPLASH_HOOK_SIG, sizeof(SPLASH_HOOK_SIG)) != 0)
     {
-        Log("SecondLineSplash: сигнатура не совпала (%02X %02X %02X %02X %02X %02X %02X %02X %02X) - не патчим",
+        Log("SecondLineSplash: сигнатура не совпала (entry %02X %02X %02X %02X %02X %02X / hook %02X %02X %02X %02X %02X %02X %02X %02X %02X) - не патчим",
+            entry[0], entry[1], entry[2], entry[3], entry[4], entry[5],
             hook[0], hook[1], hook[2], hook[3], hook[4], hook[5], hook[6], hook[7], hook[8]);
         return false;
     }
 
     g_splashResumeAddr = g_base + RVA_SPLASH_RESUME;
 
+    // Трамплин: копия пролога (6 байт) + jmp обратно на entry+6.
+    g_splashTrampoline = (DWORD)(DWORD_PTR)VirtualAlloc(0, 32, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    if (!g_splashTrampoline)
+        return false;
+    unsigned char* tramp = (unsigned char*)g_splashTrampoline;
+    memcpy(tramp, entry, 6);
+    tramp[6] = 0xE9;
+    *(DWORD*)(tramp + 7) = ((DWORD)entry + 6) - ((DWORD)g_splashTrampoline + 11);
+
+    // Хук входа: E9 на SplashEntryThunk + NOP шестого байта пролога.
     DWORD oldProtect = 0;
+    if (!VirtualProtect(entry, 6, PAGE_EXECUTE_READWRITE, &oldProtect))
+        return false;
+    unsigned char entryPatch[6];
+    entryPatch[0] = 0xE9;
+    *(DWORD*)(entryPatch + 1) = (DWORD)(DWORD_PTR)&SplashEntryThunk - ((DWORD)entry + 5);
+    entryPatch[5] = 0x90;
+    memcpy(entry, entryPatch, sizeof(entryPatch));
+    VirtualProtect(entry, 6, oldProtect, &oldProtect);
+
     if (!VirtualProtect(hook, 5, PAGE_EXECUTE_READWRITE, &oldProtect))
         return false;
 
@@ -19402,6 +19526,377 @@ static bool InstallPriorityByRule()
         RVA_PRIO_AUTO_RESUME, RESUME, sizeof(RESUME), (void*)&PrioAutoThunk, "FactoryPriorityByRule");
 }
 
+// ---------------------------------------------------------------
+// PATCH_POP_CARD_STRATA_MODIFIERS (5.45): карточка попа показывает нужды с модификаторами страны
+// poor_/middle_/rich_ life_needs / everyday_needs / luxury_needs (отображение; симуляция уже их
+// учитывает).
+//
+// В симуляции модификаторы работают: страна хранит значение модификатора (тысячные) по слотам
+// 0x26..0x2E блока +0xA60 (life poor/middle/rich 0x26..0x28, everyday 0x29..0x2B, luxury 0x2C..0x2E);
+// FUN_00485E40 берёт из них множитель (1+мод) по страте попа (тип+0x3C: 0 poor, 1 middle, 2 rich) и
+// передаёт его в FUN_00485390 (цена набора попа), а FUN_004808D0 умножает на него масштаб записи
+// "страна x тип" (покупка). Карточка попа (FUN_00983CB0, списки life/everyday/luxury_needs_list)
+// множитель (1+мод) не применяет, поэтому количество товаров в ней не менялось.
+// В FUN_00983CB0 общая база (EBX:[ebp-0x20]) = размер попа x (goods_demand/1000 + const)
+// умножается на потребность каждого товара в трёх циклах. Хуки перед циклами (место "call eax" +
+// "mov eax,[esi+0x34|0x44|0x54]") подменяют базу на базу x (1+мод) нужного класса.
+// ---------------------------------------------------------------
+
+static const DWORD RVA_CARD_LIFE_SITE   = 0x583E16;
+static const DWORD RVA_CARD_LIFE_RESUME = 0x583E1B;
+static const DWORD RVA_CARD_EVD_SITE    = 0x583F11;
+static const DWORD RVA_CARD_EVD_RESUME  = 0x583F16;
+static const DWORD RVA_CARD_LUX_SITE    = 0x584025;
+static const DWORD RVA_CARD_LUX_RESUME  = 0x58402A;
+static DWORD g_cardLifeResume = 0, g_cardEvdResume = 0, g_cardLuxResume = 0;
+static long long g_cardBaseOrig = 0;
+
+// frame = ebp функции; cls 0/1/2; ebxHi - текущая старшая часть базы. Возвращает новую базу.
+static long long __cdecl PopCardBase(unsigned char* frame, int cls, unsigned int ebxHi)
+{
+    long long cur = ((long long)(int)ebxHi << 32) | *(unsigned int*)(frame - 0x20);
+    __try
+    {
+        if (cls == 0)
+            g_cardBaseOrig = cur;
+        long long base = g_cardBaseOrig;
+
+        unsigned char* window = *(unsigned char**)(frame + 8);
+        unsigned char* pop    = *(unsigned char**)(window + 0x28);
+        unsigned char* ptype  = *(unsigned char**)(pop + 0x68);
+        unsigned char* prov   = *(unsigned char**)(pop + 0x64);
+        int strata   = *(int*)(ptype + 0x3C);
+        int ownerIdx = *(int*)(prov + 0x12C);
+        if (strata < 0 || strata > 2)
+            return cur;
+        unsigned char* country = (unsigned char*)GetCountryPtr(ownerIdx);
+        if (!country)
+            return cur;
+        unsigned char* block = *(unsigned char**)(country + 0xA60);
+        if (!block)
+            return cur;
+        int raw = *(int*)(block + (0x26 + cls * 3 + strata) * 8);   // тысячные
+        long long f = 32768 + (long long)raw * 32768 / 1000;
+        if (f < 0)
+            f = 0;
+        return base * f / 32768;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+    }
+    return cur;
+}
+
+__declspec(naked) static void PopCardLifeThunk()
+{
+    __asm {
+        call eax
+        mov eax, dword ptr [esi + 0x34]
+        pushad
+        push ebx
+        push 0
+        push ebp
+        call PopCardBase
+        add esp, 12
+        mov dword ptr [ebp - 0x20], eax
+        mov dword ptr [esp + 0x10], edx
+        popad
+        jmp dword ptr [g_cardLifeResume]
+    }
+}
+
+__declspec(naked) static void PopCardEvdThunk()
+{
+    __asm {
+        call eax
+        mov eax, dword ptr [esi + 0x44]
+        pushad
+        push ebx
+        push 1
+        push ebp
+        call PopCardBase
+        add esp, 12
+        mov dword ptr [ebp - 0x20], eax
+        mov dword ptr [esp + 0x10], edx
+        popad
+        jmp dword ptr [g_cardEvdResume]
+    }
+}
+
+__declspec(naked) static void PopCardLuxThunk()
+{
+    __asm {
+        call eax
+        mov eax, dword ptr [esi + 0x54]
+        pushad
+        push ebx
+        push 2
+        push ebp
+        call PopCardBase
+        add esp, 12
+        mov dword ptr [ebp - 0x20], eax
+        mov dword ptr [esp + 0x10], edx
+        popad
+        jmp dword ptr [g_cardLuxResume]
+    }
+}
+
+static bool InstallPopCardStrataMods()
+{
+    static const unsigned char SIG_LIFE[5] = { 0xFF, 0xD0, 0x8B, 0x46, 0x34 };
+    static const unsigned char SIG_EVD[5]  = { 0xFF, 0xD0, 0x8B, 0x46, 0x44 };
+    static const unsigned char SIG_LUX[5]  = { 0xFF, 0xD0, 0x8B, 0x46, 0x54 };
+    static const unsigned char RES_LIFE[2] = { 0xEB, 0x03 };
+    static const unsigned char RES_EVD[3]  = { 0x3B, 0x46, 0x44 };
+    static const unsigned char RES_LUX[3]  = { 0x8D, 0x9B, 0x00 };
+    g_cardLifeResume = g_base + RVA_CARD_LIFE_RESUME;
+    g_cardEvdResume  = g_base + RVA_CARD_EVD_RESUME;
+    g_cardLuxResume  = g_base + RVA_CARD_LUX_RESUME;
+    // Все три или ни одного: иначе базы разных классов разъедутся.
+    bool ok = true;
+    unsigned char* a = (unsigned char*)(g_base + RVA_CARD_LIFE_SITE);
+    unsigned char* b = (unsigned char*)(g_base + RVA_CARD_EVD_SITE);
+    unsigned char* c = (unsigned char*)(g_base + RVA_CARD_LUX_SITE);
+    if (memcmp(a, SIG_LIFE, 5) || memcmp(b, SIG_EVD, 5) || memcmp(c, SIG_LUX, 5))
+    {
+        Log("PopCardStrataMods: сигнатуры не совпали - не патчим");
+        return false;
+    }
+    ok = WriteJmpSite(RVA_CARD_LIFE_SITE, SIG_LIFE, 5, 5, RVA_CARD_LIFE_RESUME, RES_LIFE, 2,
+        (void*)&PopCardLifeThunk, "PopCardStrataMods.life") && ok;
+    ok = WriteJmpSite(RVA_CARD_EVD_SITE, SIG_EVD, 5, 5, RVA_CARD_EVD_RESUME, RES_EVD, 3,
+        (void*)&PopCardEvdThunk, "PopCardStrataMods.everyday") && ok;
+    ok = WriteJmpSite(RVA_CARD_LUX_SITE, SIG_LUX, 5, 5, RVA_CARD_LUX_RESUME, RES_LUX, 3,
+        (void*)&PopCardLuxThunk, "PopCardStrataMods.luxury") && ok;
+    return ok;
+}
+
+// ---------------------------------------------------------------
+// PATCH_BUDGET_PAYOUT_BY_NEEDS: выплаты из бюджета типам попов пропорциональны их нуждам.
+//
+// FUN_0050B9B0 (stdcall, ret 0x10: страна, число типов, список типов, флаг) - раздача расходов
+// бюджета типам попов. Фаза 1 (циклы по 4 статьям и по типам) считает для каждого типа сумму
+// "доля населения x вес", где вес лежит в типе попов: +0x320 (life_needs_income), +0x328
+// (everyday_needs_income), +0x330 (luxury_needs_income) - int64 fixed15, тип попов совпадает со
+// статьёй по коду type (education 0, administration 1, military 3; "reforms" = 4 не совпадает ни с чем).
+// Дальше деньги идут попам по этим суммам, а расход статьи = сумма выплат.
+//
+// Хуки: на входе функции веса всех типов временно умножаются на (1 + модификатор страны
+// poor_/middle_/rich_ life/everyday/luxury_needs) по страте типа (+0x3C) и классу (слоты блока
+// страны +0xA60: 0x26+3*класс+страта, значение в тысячных); после фазы 1 (место
+// "mov eax,[ebx+0x1234]" сразу после цикла по статьям) исходные веса возвращаются. Выплата типу
+// падает ровно во столько же раз, во сколько падают его нужды; освободившиеся деньги остаются в
+// казне (между другими типами не перераспределяются). Социальная статья (пенсии, пособия) тоже
+// делится по life-весу и уменьшается так же. Без модификаторов множитель 1 и ничего не меняется.
+// ---------------------------------------------------------------
+
+static const DWORD RVA_PAYOUT_ENTRY        = 0x10B9B0;
+static const DWORD RVA_PAYOUT_ENTRY_RESUME = 0x10B9B9;
+static const DWORD RVA_PAYOUT_PHASE1_END   = 0x10BDD9;
+static const DWORD RVA_PAYOUT_PHASE1_RESUME= 0x10BDDF;
+static DWORD g_payoutEntryResume = 0, g_payoutPhase1Resume = 0;
+
+struct PayoutSaved { unsigned char* ptype; long long w[3]; };
+static PayoutSaved g_payoutSaved[64];
+static int g_payoutSavedCount = 0;
+static int g_payoutLogged = 0;
+
+// frame = ebp функции после стандартного пролога: [+8] страна, [+0xC] число типов, [+0x10] список типов.
+static void __cdecl PayoutScaleWeights(unsigned char* frame)
+{
+    g_payoutSavedCount = 0;
+    __try
+    {
+        unsigned char* country = *(unsigned char**)(frame + 8);
+        int n = *(int*)(frame + 0xC);
+        unsigned char* list = *(unsigned char**)(frame + 0x10);
+        if (!country || !list || n <= 0)
+            return;
+        unsigned char* block = *(unsigned char**)(country + 0xA60);
+        if (!block)
+            return;
+        int* base = *(int**)(list + 0xC);
+        int* end  = *(int**)(list + 0x10);
+        int size = (int)((unsigned char*)end - (unsigned char*)base) >> 2;
+        for (int i = 0; i < n && i < 64; ++i)
+        {
+            if (i >= size)
+                break;
+            unsigned char* pt = (unsigned char*)base[i];
+            if (!pt)
+                continue;
+            int strata = *(int*)(pt + 0x3C);
+            if (strata < 0 || strata > 2)
+                continue;
+            long long f[3];
+            bool changed = false;
+            for (int c = 0; c < 3; ++c)
+            {
+                int raw = *(int*)(block + (0x26 + c * 3 + strata) * 8);
+                long long v = 32768 + (long long)raw * 32768 / 1000;
+                f[c] = v < 0 ? 0 : v;
+                if (f[c] != 32768)
+                    changed = true;
+            }
+            if (!changed)
+                continue;
+            PayoutSaved& sv = g_payoutSaved[g_payoutSavedCount++];
+            sv.ptype = pt;
+            for (int c = 0; c < 3; ++c)
+            {
+                long long* w = (long long*)(pt + 0x320 + c * 8);
+                sv.w[c] = *w;
+                *w = sv.w[c] * f[c] / 32768;
+            }
+            if (g_payoutLogged < 8)
+            {
+                ++g_payoutLogged;
+                Log("PayoutByNeeds: тип попов %p страта %d: множители выплат life %.3f everyday %.3f luxury %.3f",
+                    pt, strata, f[0] / 32768.0, f[1] / 32768.0, f[2] / 32768.0);
+            }
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        Log("PayoutByNeeds: исключение при масштабировании весов");
+    }
+}
+
+static void __cdecl PayoutRestoreWeights()
+{
+    __try
+    {
+        for (int i = 0; i < g_payoutSavedCount; ++i)
+        {
+            PayoutSaved& sv = g_payoutSaved[i];
+            for (int c = 0; c < 3; ++c)
+                *(long long*)(sv.ptype + 0x320 + c * 8) = sv.w[c];
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        Log("PayoutByNeeds: исключение при восстановлении весов");
+    }
+    g_payoutSavedCount = 0;
+}
+
+// Вход FUN_0050B9B0: 55 8B EC 81 EC 84 00 00 00 (push ebp / mov ebp,esp / sub esp,0x84).
+__declspec(naked) static void PayoutEntryThunk()
+{
+    __asm {
+        push ebp
+        mov ebp, esp
+        sub esp, 0x84
+        pushad
+        push ebp
+        call PayoutScaleWeights
+        add esp, 4
+        popad
+        jmp dword ptr [g_payoutEntryResume]
+    }
+}
+
+// После цикла по статьям: оригинальная "mov eax,[ebx+0x1234]".
+__declspec(naked) static void PayoutPhase1EndThunk()
+{
+    __asm {
+        mov eax, dword ptr [ebx + 0x1234]
+        pushad
+        call PayoutRestoreWeights
+        popad
+        jmp dword ptr [g_payoutPhase1Resume]
+    }
+}
+
+static bool InstallBudgetPayoutByNeeds()
+{
+    static const unsigned char SIG_ENTRY[9]  = { 0x55, 0x8B, 0xEC, 0x81, 0xEC, 0x84, 0x00, 0x00, 0x00 };
+    static const unsigned char RES_ENTRY[3]  = { 0x53, 0x8B, 0x5D };
+    static const unsigned char SIG_END[6]    = { 0x8B, 0x83, 0x34, 0x12, 0x00, 0x00 };
+    static const unsigned char RES_END[3]    = { 0x8B, 0x8B, 0x38 };
+    g_payoutEntryResume  = g_base + RVA_PAYOUT_ENTRY_RESUME;
+    g_payoutPhase1Resume = g_base + RVA_PAYOUT_PHASE1_RESUME;
+    // Оба хука или ни одного: иначе веса останутся умноженными.
+    if (memcmp((const void*)(g_base + RVA_PAYOUT_ENTRY), SIG_ENTRY, sizeof(SIG_ENTRY)) != 0 ||
+        memcmp((const void*)(g_base + RVA_PAYOUT_PHASE1_END), SIG_END, sizeof(SIG_END)) != 0)
+    {
+        Log("PayoutByNeeds: сигнатуры не совпали - не патчим");
+        return false;
+    }
+    // Сначала хук восстановления: если он встанет, а входной нет - ничего не сломается.
+    if (!WriteJmpSite(RVA_PAYOUT_PHASE1_END, SIG_END, sizeof(SIG_END), 6,
+            RVA_PAYOUT_PHASE1_RESUME, RES_END, sizeof(RES_END), (void*)&PayoutPhase1EndThunk, "PayoutByNeeds.restore"))
+        return false;
+    return WriteJmpSite(RVA_PAYOUT_ENTRY, SIG_ENTRY, sizeof(SIG_ENTRY), 9,
+        RVA_PAYOUT_ENTRY_RESUME, RES_ENTRY, sizeof(RES_ENTRY), (void*)&PayoutEntryThunk, "PayoutByNeeds.entry");
+}
+
+// ---------------------------------------------------------------
+// PATCH_FIX_STRATA_NEEDS_MODIFIERS: middle/rich у модификаторов страны *_life_needs и *_everyday_needs.
+//
+// Реестр описаний модификаторов (FUN_00449120, вызывается из FUN_00639120) создаёт описания по
+// порядку: poor_life, rich_life, middle_life, poor_everyday, rich_everyday, middle_everyday,
+// poor_luxury, middle_luxury, rich_luxury. У описания есть id ключа (+0x20) и "слот" (+0x24),
+// а парсер модификаторов (FUN_0044BEF0) кладёт значение не в слот, а в ПОЗИЦИЮ описания в этом
+// векторе (+0x18 + позиция*8). Движок же читает блок страны по слотам: poor, middle, rich =
+// 0x26,0x27,0x28 / 0x29,0x2A,0x2B / 0x2C,0x2D,0x2E. У luxury позиция = слот, у life и everyday
+// rich и middle идут в обратном порядке: значение middle_life_needs (позиция 0x28) читалось как
+// rich_life_needs, значение rich_* - как middle_*. Поэтому middle_life_needs/middle_everyday_needs
+// действовали на богатые типы (strata rich), а на средний класс не действовали.
+// Исправление: в коде реестра меняются местами три непосредственных операнда (адрес имени,
+// id ключа, слот) у блоков rich и middle для life и для everyday - позиции становятся
+// poor, middle, rich как у luxury. Код реестра правится до его первого вызова (при старте).
+// ---------------------------------------------------------------
+
+struct StrataSwapSite { DWORD rvaA, rvaB; BYTE opcode; DWORD expectA, expectB; bool checkValue; };
+
+static bool InstallFixStrataNeedsMods()
+{
+    // имя (mov edx, imm32 = BA), id (push imm32 = 68), слот (mov edx, imm32 = BA); адрес = rva+1
+    static const StrataSwapSite SITES[] = {
+        // life: блок rich (0x449F2A/39/3F) <-> блок middle (0x449F7C/8B/91)
+        { 0x49F2A, 0x49F7C, 0xBA, 0, 0, false },
+        { 0x49F39, 0x49F8B, 0x68, 0x215, 0x216, true },
+        { 0x49F3F, 0x49F91, 0xBA, 0x28, 0x27, true },
+        // everyday: блок rich (0x44A020/2F/35) <-> блок middle (0x44A072/81/87)
+        { 0x4A020, 0x4A072, 0xBA, 0, 0, false },
+        { 0x4A02F, 0x4A081, 0x68, 0x62E, 0x62F, true },
+        { 0x4A035, 0x4A087, 0xBA, 0x2B, 0x2A, true },
+    };
+    const int N = (int)(sizeof(SITES) / sizeof(SITES[0]));
+    for (int i = 0; i < N; ++i)
+    {
+        const unsigned char* a = (const unsigned char*)(g_base + SITES[i].rvaA);
+        const unsigned char* b = (const unsigned char*)(g_base + SITES[i].rvaB);
+        if (a[0] != SITES[i].opcode || b[0] != SITES[i].opcode)
+        {
+            Log("FixStrataNeedsMods: неожиданный опкод в узле %d - не патчим", i);
+            return false;
+        }
+        if (SITES[i].checkValue &&
+            (*(const DWORD*)(a + 1) != SITES[i].expectA || *(const DWORD*)(b + 1) != SITES[i].expectB))
+        {
+            Log("FixStrataNeedsMods: значения узла %d не совпали (уже исправлено?) - не патчим", i);
+            return false;
+        }
+    }
+    for (int i = 0; i < N; ++i)
+    {
+        unsigned char* a = (unsigned char*)(g_base + SITES[i].rvaA) + 1;
+        unsigned char* b = (unsigned char*)(g_base + SITES[i].rvaB) + 1;
+        DWORD oldA = 0, oldB = 0;
+        if (!VirtualProtect(a, 4, PAGE_EXECUTE_READWRITE, &oldA) || !VirtualProtect(b, 4, PAGE_EXECUTE_READWRITE, &oldB))
+            return false;
+        DWORD va = *(DWORD*)a, vb = *(DWORD*)b;
+        *(DWORD*)a = vb;
+        *(DWORD*)b = va;
+        VirtualProtect(a, 4, oldA, &oldA);
+        VirtualProtect(b, 4, oldB, &oldB);
+    }
+    Log("FixStrataNeedsMods: middle/rich у life/everyday_needs поменяны местами в реестре модификаторов");
+    return true;
+}
+
 static bool InstallNeedsHonestUi()
 {
     static const unsigned char SIG_PURCHASE[6]  = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x1C };
@@ -20797,6 +21292,15 @@ static bool Install()
 
     if (g_settings.patchFactoryPriorityByRule)
         InstallPriorityByRule();
+
+    if (g_settings.patchFixStrataNeedsMods)
+        InstallFixStrataNeedsMods();
+
+    if (g_settings.patchPopCardStrataMods)
+        InstallPopCardStrataMods();
+
+    if (g_settings.patchBudgetPayoutByNeeds)
+        InstallBudgetPayoutByNeeds();
 
     if (g_settings.EventSounds)
         LoadEventMusicDll();
