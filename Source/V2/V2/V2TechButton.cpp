@@ -26,8 +26,10 @@
 #include <float.h>
 #include <xmmintrin.h>
 #include <pmmintrin.h>
+#include <vector>
 
 #include "lua51_exports.h"
+#include "V2DLL_Shared.h"
 
 // ---------------------------------------------------------------
 // Настройки сборки
@@ -37,7 +39,7 @@
 // "у кого-то старая DLL" — сравнить эту строку в логах перед сетевой
 // игрой.
 // CLAUDE МЕНЯЙ ВЕРСИЮ ПРИ КАЖДОЙ ПРАВКЕ ФАЙЛА
-#define MOD_VERSION "5.59"
+#define MOD_VERSION "5.71"
 
 // Настройки ниже читаются из v2dll_settings.ini рядом с exe при
 // каждом запуске игры. Если файла ещё нет, он создаётся со
@@ -159,6 +161,10 @@ struct Settings
     // Прибавлять закупленное к спросу рынка (иначе государство только
     // платит деньги, цены не двигаются).
     bool goodsConsumptionDemand      = true;
+    // assimilate = { culture = ... religion = ... amount = ... } (block form).
+    bool assimilateBlock             = true;
+    // Load the running mod's v2dll_mod.dll if it has one (see V2ModAPI.h).
+    bool enableMods                  = true;
 
     // Взаимоисключающе с priceDelta (ENABLE_PRICE_DELTA) - оба
     // патчат один и тот же адрес. Если включены оба, побеждает этот.
@@ -245,6 +251,15 @@ struct Settings
     bool patchSkipNestedIdle   = false; // 3.56: не звать IdleInGame при nest; checksum/насос живы
     bool patchSkipChkWin       = false; // 3.57 ОШИБКА: 2859C0 = дневной тик сессии, не окна. Не включать.
     bool patchCamStill         = false; // 3.59 провал: 1e08-skip → лишние IdleInGame, FPS хуже. Не включать.
+    bool patchCompressFlagCache = true; // experimental: cache flag atlases as DXT1 instead of uncompressed TGA
+    bool patchPopPrefetch = true; // prefetch Victoria 2 pop data before economy loops
+    bool patchCullDecisionChecks = true; // filter impossible AI decisions from per-country lists
+    bool patchCullCbChecks = true; // cull attacker-only casus belli checks in AI target scans
+    bool patchPrefetchRelations = true; // prefetch country relation objects before daily scans
+    bool patchPrefetchAiRelations = true; // prefetch relation rows before AI target scans
+    bool patchFastAiQueue = true; // finish the AI job queue in one frame at max speed
+    int patchParallelDecisions = 1; // 0 off, 1 use worker results, 2 compare only
+    int patchParallelEvents = 1; // 0 off, 1 use worker results, 2 compare only
 
     // FIX_SFX_MIXER_LAG: select() "микшера" (вызов из 0x689C00-0x68C000,
     // основной 0x68B47D) ждёт 14-20 мс на итерацию - режем до 1 мс копией
@@ -311,7 +326,7 @@ static void InitLogDir()
     g_logDirReady = true;
 }
 
-static void Log(const char* fmt, ...)
+void Log(const char* fmt, ...)
 {
     if (!g_settings.log)
         return;
@@ -354,6 +369,7 @@ static void Log(const char* fmt, ...)
 // через обычный Log и остаются всегда. Аргументы при выключенном режиме не
 // вычисляются.
 #define LogDbg(...) do { if (g_settings.debugLog) Log(__VA_ARGS__); } while (0)
+bool V2_DebugLogEnabled() { return g_settings.debugLog; }
 
 
 // ---------------------------------------------------------------
@@ -576,7 +592,7 @@ static void GStrSet(void* str, const char* text)
 // Состояние
 // ---------------------------------------------------------------
 
-static DWORD  g_base = 0;
+DWORD  g_base = 0;
 static DWORD  g_imageSize = 0;
 static void* g_fnOnMakeDecision = 0;
 
@@ -4376,6 +4392,20 @@ static void ParseExtraWhitelist(const char* value)
 
 static void ApplySetting(const char* key, const char* value)
 {
+    if (_stricmp(key, "PATCH_PARALLEL_DECISIONS") == 0)
+    {
+        g_settings.patchParallelDecisions = atoi(value);
+        if (g_settings.patchParallelDecisions < 0 || g_settings.patchParallelDecisions > 2)
+            g_settings.patchParallelDecisions = 0;
+        return;
+    }
+    if (_stricmp(key, "PATCH_PARALLEL_EVENTS") == 0)
+    {
+        g_settings.patchParallelEvents = atoi(value);
+        if (g_settings.patchParallelEvents < 0 || g_settings.patchParallelEvents > 2)
+            g_settings.patchParallelEvents = 0;
+        return;
+    }
     bool v = ParseBoolValue(value);
 
     if (_stricmp(key, "LOCAL_MOD_CONFIG") == 0)             { g_settings.localModConfig = v; return; }
@@ -4469,6 +4499,13 @@ static void ApplySetting(const char* key, const char* value)
     if (_stricmp(key, "PATCH_SKIP_NESTED_IDLE") == 0)           { g_settings.patchSkipNestedIdle         = v; return; }
     if (_stricmp(key, "PATCH_SKIP_CHK_WIN") == 0)               { g_settings.patchSkipChkWin             = v; return; }
     if (_stricmp(key, "PATCH_CAM_STILL") == 0)                  { g_settings.patchCamStill               = v; return; }
+    if (_stricmp(key, "PATCH_COMPRESS_FLAG_CACHE") == 0)          { g_settings.patchCompressFlagCache       = v; return; }
+    if (_stricmp(key, "PATCH_PREFETCH_POPS") == 0)                 { g_settings.patchPopPrefetch              = v; return; }
+    if (_stricmp(key, "PATCH_CULL_DECISION_CHECKS") == 0)           { g_settings.patchCullDecisionChecks       = v; return; }
+    if (_stricmp(key, "PATCH_CULL_CB_CHECKS") == 0)                 { g_settings.patchCullCbChecks              = v; return; }
+    if (_stricmp(key, "PATCH_PREFETCH_RELATIONS") == 0)             { g_settings.patchPrefetchRelations          = v; return; }
+    if (_stricmp(key, "PATCH_PREFETCH_AI_RELATIONS") == 0)          { g_settings.patchPrefetchAiRelations       = v; return; }
+    if (_stricmp(key, "PATCH_FAST_AI_QUEUE") == 0)                  { g_settings.patchFastAiQueue               = v; return; }
     if (_stricmp(key, "FIX_SFX_MIXER_LAG") == 0)                { g_settings.fixSfxMixerLag              = v; return; }
     if (_stricmp(key, "FIX_ARMY_WINDOW_LAG") == 0)              { g_settings.patchFixArmyWindowLag       = v; return; }
     if (_stricmp(key, "HIDE_RAW_GOODS_FILTER") == 0)            { g_settings.hideRawGoodsFilter          = v; return; }
@@ -4483,6 +4520,8 @@ static void ApplySetting(const char* key, const char* value)
     if (_stricmp(key, "ENABLE_MINTING") == 0)                   { g_settings.minting                     = v; return; }
     if (_stricmp(key, "ENABLE_GOODS_CONSUMPTION") == 0)         { g_settings.goodsConsumption            = v; return; }
     if (_stricmp(key, "GOODS_CONSUMPTION_MARKET_DEMAND") == 0)  { g_settings.goodsConsumptionDemand      = v; return; }
+    if (_stricmp(key, "ENABLE_ASSIMILATE_BLOCK") == 0)          { g_settings.assimilateBlock             = v; return; }
+    if (_stricmp(key, "ENABLE_MODS") == 0)                      { g_settings.enableMods                  = v; return; }
 
     if (_stricmp(key, "COMBAT_ROLL_MIN") == 0) { g_settings.combatRollMin = atoi(value); return; }
     if (_stricmp(key, "COMBAT_ROLL_MAX") == 0) { g_settings.combatRollMax = atoi(value); return; }
@@ -4689,6 +4728,8 @@ static void WriteDefaultSettings(const char* path)
         "ENABLE_MINTING=%d\n"
         "ENABLE_GOODS_CONSUMPTION=%d\n"
         "GOODS_CONSUMPTION_MARKET_DEMAND=%d\n"
+        "ENABLE_ASSIMILATE_BLOCK=%d\n"
+        "ENABLE_MODS=%d\n"
         "PATCH_BUDGET_TOTAL_INCOME_TARIFFS=%d\n"
         "\n",
         (int)FindExePatchEnabled("consciousness_plurality_growth"),
@@ -4707,6 +4748,8 @@ static void WriteDefaultSettings(const char* path)
         (int)g_settings.minting,
         (int)g_settings.goodsConsumption,
         (int)g_settings.goodsConsumptionDemand,
+        (int)g_settings.assimilateBlock,
+        (int)g_settings.enableMods,
         (int)FindExePatchEnabled("budget_total_income_tariffs_1"));
 
     fprintf(f,
@@ -4732,6 +4775,15 @@ static void WriteDefaultSettings(const char* path)
         "PATCH_SKIP_NESTED_IDLE=%d\n"
         "PATCH_SKIP_CHK_WIN=%d\n"
         "PATCH_CAM_STILL=%d\n"
+        "PATCH_COMPRESS_FLAG_CACHE=%d\n"
+        "PATCH_PREFETCH_POPS=%d\n"
+        "PATCH_CULL_DECISION_CHECKS=%d\n"
+        "PATCH_CULL_CB_CHECKS=%d\n"
+        "PATCH_PREFETCH_RELATIONS=%d\n"
+        "PATCH_PREFETCH_AI_RELATIONS=%d\n"
+        "PATCH_FAST_AI_QUEUE=%d\n"
+        "PATCH_PARALLEL_DECISIONS=%d\n"
+        "PATCH_PARALLEL_EVENTS=%d\n"
         "FIX_SFX_MIXER_LAG=%d\n"
         "FIX_ARMY_WINDOW_LAG=%d\n"
         "\n",
@@ -4756,6 +4808,15 @@ static void WriteDefaultSettings(const char* path)
         (int)g_settings.patchSkipNestedIdle,
         (int)g_settings.patchSkipChkWin,
         (int)g_settings.patchCamStill,
+        (int)g_settings.patchCompressFlagCache,
+        (int)g_settings.patchPopPrefetch,
+        (int)g_settings.patchCullDecisionChecks,
+        (int)g_settings.patchCullCbChecks,
+        (int)g_settings.patchPrefetchRelations,
+        (int)g_settings.patchPrefetchAiRelations,
+        (int)g_settings.patchFastAiQueue,
+        g_settings.patchParallelDecisions,
+        g_settings.patchParallelEvents,
         (int)g_settings.fixSfxMixerLag,
         (int)g_settings.patchFixArmyWindowLag);
 
@@ -6276,7 +6337,7 @@ static void* __fastcall UnitButtonsTooltipThunk(void* thisObj, void* edx, void* 
 
 // Определена ниже по файлу (используется и для VIEWS/CDecision) -
 // нужно опережающее объявление, раз пользуемся ей раньше её тела.
-static bool PatchSlot(DWORD rvaVtable, int slotIndex, void* replacement, void** outOriginal);
+bool PatchSlot(DWORD rvaVtable, int slotIndex, void* replacement, void** outOriginal);
 
 static bool InstallFleetPassengerTooltip()
 {
@@ -7559,7 +7620,7 @@ static bool InstallFactoryDumpScan()
 
 // Таблицы лежат в .rdata, поэтому запись только со снятием защиты —
 // иначе она молча не проходит.
-static bool PatchSlot(DWORD rvaVtable, int slotIndex, void* replacement, void** outOriginal)
+bool PatchSlot(DWORD rvaVtable, int slotIndex, void* replacement, void** outOriginal)
 {
     void** slot = (void**)(g_base + rvaVtable) + slotIndex;
 
@@ -9347,7 +9408,7 @@ static bool g_consActive = false;        // включены закупка/ра
 static LONG g_consLevelLogged = 0;
 static LONG g_consDailyLogged = 0;
 
-static double ConsParseNumber(const char* s)
+double ConsParseNumber(const char* s)
 {
     while (*s == ' ' || *s == '\t')
         ++s;
@@ -14659,7 +14720,7 @@ static void __fastcall HookIdleIngame(void* self, void* edx, int arg)
         (int)g_idleWckN, g_idleWckLoc / 1000, (int)g_idleWckSkip);
 }
 
-static bool StealToTrampoline(DWORD rva, unsigned steal, unsigned char* tramp, int trampSize,
+bool StealToTrampoline(DWORD rva, unsigned steal, unsigned char* tramp, int trampSize,
     const unsigned char* expect, void* hook, void** orig, const char* tag)
 {
     unsigned char* src = (unsigned char*)(g_base + rva);
@@ -21072,6 +21133,1538 @@ static bool InstallGoodsIcons()
     return ok;
 }
 
+// PATCH_COMPRESS_FLAG_CACHE: store the generated flag atlas as a DXT1 DDS
+// payload (the game keeps the historical .tga cache filename).  We only
+// redirect the three atlas-cache calls; individual flag loading and all
+// other textures continue through the game's existing D3DX imports.
+//
+// v2game.exe 3.04 sites (VA -> RVA):
+//   0x007E629C -> 0x3E629C: create the atlas copy used for cache output
+//   0x007E6367 -> 0x3E6367: save that copy (TGA -> DDS)
+//   0x007E6492 -> 0x3E6492: load the cache, converting old caches to DXT1
+// Each six-byte indirect import call becomes CALL wrapper; NOP. The IAT
+// function pointers are captured at install time, so the wrappers chain
+// through the already-installed GoodsIcons hook when that hook is enabled.
+static const DWORD RVA_FC_IAT_SAVE_TEXTURE = 0x88A418;
+static const DWORD RVA_FC_IAT_CREATE_TEXTURE = 0x88A41C;
+static const DWORD RVA_FC_IAT_LOAD_TEXTURE = 0x88A424;
+static const DWORD RVA_FC_CREATE_COPY = 0x3E629C;
+static const DWORD RVA_FC_SAVE_CACHE = 0x3E6367;
+static const DWORD RVA_FC_LOAD_CACHE = 0x3E6492;
+
+static const DWORD FC_FORMAT_UNKNOWN = 0;
+static const DWORD FC_FORMAT_A8R8G8B8 = 21;
+static const DWORD FC_FORMAT_DXT1 = 0x31545844; // D3DFMT_DXT1
+static const DWORD FC_FILE_TGA = 2;             // D3DXIFF_TGA
+static const DWORD FC_FILE_DDS = 4;             // D3DXIFF_DDS
+
+typedef HRESULT (WINAPI* tFcCreateTexture)(void* dev, UINT width, UINT height, UINT levels,
+    DWORD usage, DWORD format, DWORD pool, void** texture);
+typedef HRESULT (WINAPI* tFcSaveTexture)(void** data, DWORD fileFormat, void* texture,
+    const void* palette);
+typedef HRESULT (WINAPI* tFcLoadTexture)(void* dev, const void* data, UINT size, UINT width,
+    UINT height, UINT levels, DWORD usage, DWORD format, DWORD pool, DWORD filter,
+    DWORD mipFilter, DWORD colorKey, void* info, void* palette, void** texture);
+
+static tFcCreateTexture g_fcCreateTexture = 0;
+static tFcSaveTexture g_fcSaveTexture = 0;
+static tFcLoadTexture g_fcLoadTexture = 0;
+static LONG g_fcSaved = 0;
+static LONG g_fcLoaded = 0;
+static LONG g_fcConverted = 0;
+
+static bool FcIsDxt1Dds(const void* data, UINT size)
+{
+    if (!data || size < 128)
+        return false;
+    const unsigned char* p = (const unsigned char*)data;
+    if (memcmp(p, "DDS ", 4) != 0)
+        return false;
+    DWORD fourcc = 0;
+    memcpy(&fourcc, p + 84, sizeof(fourcc));
+    return fourcc == FC_FORMAT_DXT1;
+}
+
+static HRESULT WINAPI FcCreateAtlasCopy(void* dev, UINT width, UINT height, UINT levels,
+    DWORD usage, DWORD format, DWORD pool, void** texture)
+{
+    // D3DXLoadSurfaceFromSurface performs the actual compression into this texture.
+    if (format == FC_FORMAT_A8R8G8B8 && width % 4 == 0 && height % 4 == 0)
+        format = FC_FORMAT_DXT1;
+    return g_fcCreateTexture(dev, width, height, levels, usage, format, pool, texture);
+}
+
+static HRESULT WINAPI FcSaveAtlasCache(void** data, DWORD fileFormat, void* texture,
+    const void* palette)
+{
+    if (fileFormat == FC_FILE_TGA)
+    {
+        fileFormat = FC_FILE_DDS;
+        LONG n = InterlockedIncrement(&g_fcSaved);
+        if (n <= 3)
+            Log("FlagCache: atlas cache %ld saved as DDS/DXT1 (the .tga filename is retained)", (long)n);
+    }
+    return g_fcSaveTexture(data, fileFormat, texture, palette);
+}
+
+static HRESULT WINAPI FcLoadAtlasCache(void* dev, const void* data, UINT size, UINT width,
+    UINT height, UINT levels, DWORD usage, DWORD format, DWORD pool, DWORD filter,
+    DWORD mipFilter, DWORD colorKey, void* info, void* palette, void** texture)
+{
+    if (format == FC_FORMAT_UNKNOWN && !FcIsDxt1Dds(data, size))
+    {
+        // Old uncompressed TGA or DXT5 cache: convert to DXT1 while loading.
+        HRESULT hr = g_fcLoadTexture(dev, data, size, width, height, levels, usage,
+            FC_FORMAT_DXT1, pool, filter, mipFilter, colorKey, info, palette, texture);
+        if (SUCCEEDED(hr))
+        {
+            LONG converted = InterlockedIncrement(&g_fcConverted);
+            InterlockedIncrement(&g_fcLoaded);
+            if (converted <= 3)
+                Log("FlagCache: converted an existing flag cache to DXT1 while loading");
+            return hr;
+        }
+        if (texture)
+            *texture = (void*)0;
+        Log("FlagCache: DXT1 conversion failed (0x%08lX); retrying with the original format",
+            (unsigned long)hr);
+    }
+
+    LONG loaded = InterlockedIncrement(&g_fcLoaded);
+    if (loaded == 1 || loaded % 10 == 0)
+        Log("FlagCache: loaded %ld atlas cache(s), %ld converted to DXT1",
+            (long)loaded, (long)g_fcConverted);
+    return g_fcLoadTexture(dev, data, size, width, height, levels, usage, format,
+        pool, filter, mipFilter, colorKey, info, palette, texture);
+}
+
+struct FcCallSite
+{
+    DWORD rva;
+    DWORD iatRva;
+    void* wrapper;
+    const char* name;
+    unsigned char expected[6];
+    unsigned char patched[6];
+};
+
+static bool InstallFlagCache()
+{
+    if (!g_settings.patchCompressFlagCache)
+        return true;
+
+    // Capture the current imports rather than resolving the exports again. This
+    // preserves V2DLL's D3DX hook chain when GoodsIcons has already installed.
+    g_fcSaveTexture = (tFcSaveTexture)*(void**)(g_base + RVA_FC_IAT_SAVE_TEXTURE);
+    g_fcCreateTexture = (tFcCreateTexture)*(void**)(g_base + RVA_FC_IAT_CREATE_TEXTURE);
+    g_fcLoadTexture = (tFcLoadTexture)*(void**)(g_base + RVA_FC_IAT_LOAD_TEXTURE);
+    if (!g_fcSaveTexture || !g_fcCreateTexture || !g_fcLoadTexture)
+    {
+        Log("FlagCache: one or more D3DX imports are null; feature not installed");
+        return false;
+    }
+
+    FcCallSite sites[3] =
+    {
+        { RVA_FC_CREATE_COPY, RVA_FC_IAT_CREATE_TEXTURE, (void*)&FcCreateAtlasCopy,
+            "create atlas copy", {}, {} },
+        { RVA_FC_SAVE_CACHE, RVA_FC_IAT_SAVE_TEXTURE, (void*)&FcSaveAtlasCache,
+            "save atlas cache", {}, {} },
+        { RVA_FC_LOAD_CACHE, RVA_FC_IAT_LOAD_TEXTURE, (void*)&FcLoadAtlasCache,
+            "load atlas cache", {}, {} }
+    };
+
+    // Validate every site first; don't leave a half-installed TGA/DDS pipeline.
+    for (int i = 0; i < 3; ++i)
+    {
+        FcCallSite& site = sites[i];
+        DWORD iatAddress = g_base + site.iatRva;
+        site.expected[0] = 0xFF;
+        site.expected[1] = 0x15;
+        memcpy(site.expected + 2, &iatAddress, sizeof(iatAddress));
+        if (memcmp((const void*)(g_base + site.rva), site.expected, sizeof(site.expected)) != 0)
+        {
+            Log("FlagCache: %s site signature mismatch at rva %06X; feature not installed",
+                site.name, site.rva);
+            return false;
+        }
+        site.patched[0] = 0xE8;
+        DWORD rel = (DWORD)(DWORD_PTR)site.wrapper - (g_base + site.rva + 5);
+        memcpy(site.patched + 1, &rel, sizeof(rel));
+        site.patched[5] = 0x90;
+    }
+
+    int installed = 0;
+    for (; installed < 3; ++installed)
+    {
+        if (!PatchBytes(sites[installed].rva, sites[installed].expected,
+            sites[installed].patched, sizeof(sites[installed].patched), "FlagCache"))
+            break;
+    }
+    if (installed != 3)
+    {
+        // Restore any earlier sites if protection or a last-moment byte check failed.
+        while (installed > 0)
+        {
+            --installed;
+            if (!PatchBytes(sites[installed].rva, sites[installed].patched,
+                sites[installed].expected, sizeof(sites[installed].expected), "FlagCache rollback"))
+                Log("FlagCache: rollback failed at rva %06X", sites[installed].rva);
+        }
+        Log("FlagCache: could not install all three hooks; rolled back earlier sites");
+        return false;
+    }
+
+    Log("FlagCache: installed; new flag atlas caches use DXT1 (old caches convert on load)");
+    return true;
+}
+
+// PATCH_PREFETCH_POPS: bring pop-object cache lines into the CPU cache before
+// Victoria 2's three hottest pop walks. This is read-only and is isolated from
+// the simulation: any invalid game pointer aborts prefetching for that pass.
+namespace PopPrefetch
+{
+    static const DWORD kMarketCall = 0x08468F;
+    static const DWORD kMarketTarget = 0x085E40;
+    static const DWORD kProvinceCall = 0x285B09;
+    static const DWORD kProvinceTarget = 0x0B9C60;
+    static const DWORD kDistributionCall = 0x081860;
+    static const DWORD kDistributionTarget = 0x55EB00;
+    static const DWORD kWorldPtr = 0xE588E8;
+    static const DWORD kMaxCursors = 4096;
+
+    static DWORD g_worldSlot;
+    static DWORD g_marketOriginal;
+    static DWORD g_provinceOriginal;
+    static DWORD g_distributionOriginal;
+    static DWORD g_cursors[kMaxCursors];
+    static volatile LONG g_faultLogged;
+
+    static void ReportFault()
+    {
+        if (InterlockedCompareExchange(&g_faultLogged, 1, 0) == 0)
+            Log("PopPrefetch: invalid game data while prefetching; skipped this pass");
+    }
+
+    static void Walk(int count)
+    {
+        // A malformed/cyclic list must not stall a game tick indefinitely.
+        DWORD rounds = 0;
+        while (count > 0 && rounds++ < 100000)
+        {
+            for (int i = 0; i < count; ++i)
+            {
+                const char* pop = (const char*)(DWORD_PTR)g_cursors[i];
+                for (DWORD off = 0; off < 0x280; off += 64)
+                    _mm_prefetch(pop + off, _MM_HINT_T0);
+            }
+            int live = 0;
+            for (int i = 0; i < count; ++i)
+            {
+                DWORD pop = g_cursors[i];
+                DWORD linked = *(DWORD*)(DWORD_PTR)(pop + 0x1D4);
+                if (linked)
+                {
+                    _mm_prefetch((const char*)(DWORD_PTR)(linked + 0xB0), _MM_HINT_T0);
+                    _mm_prefetch((const char*)(DWORD_PTR)(linked + 0xE8), _MM_HINT_T0);
+                }
+                DWORD next = *(DWORD*)(DWORD_PTR)(pop + 0x27C);
+                if (next) g_cursors[live++] = next;
+            }
+            count = live;
+        }
+    }
+
+    static void __stdcall BeforeMarket(DWORD market, DWORD country)
+    {
+        __try
+        {
+            DWORD world = *(DWORD*)(DWORD_PTR)g_worldSlot;
+            if (!world || !market || !country) return;
+            DWORD provinces = *(DWORD*)(DWORD_PTR)(world + 0xACC);
+            DWORD types = *(DWORD*)(DWORD_PTR)(market + 0x804);
+            DWORD typesEnd = *(DWORD*)(DWORD_PTR)(market + 0x808);
+            DWORD ids = *(DWORD*)(DWORD_PTR)(country + 0x9D8);
+            DWORD idsEnd = *(DWORD*)(DWORD_PTR)(country + 0x9DC);
+            if (!provinces || !types || typesEnd < types || typesEnd - types > 0x10000 ||
+                !ids || idsEnd < ids || idsEnd - ids > 0x100000 ||
+                ((typesEnd - types) & 3) || ((idsEnd - ids) & 3)) return;
+            int count = 0;
+            for (DWORD idAt = ids; idAt < idsEnd; idAt += 4)
+            {
+                DWORD provinceId = *(DWORD*)(DWORD_PTR)idAt;
+                if (provinceId > 1000000) continue;
+                DWORD province = *(DWORD*)(DWORD_PTR)(provinces + provinceId * 4);
+                DWORD lists = province ? *(DWORD*)(DWORD_PTR)(province + 0x194) : 0;
+                if (!lists) continue;
+                for (DWORD typeAt = types; typeAt < typesEnd; typeAt += 4)
+                {
+                    DWORD type = *(DWORD*)(DWORD_PTR)typeAt;
+                    if (type > 4096) continue;
+                    DWORD head = *(DWORD*)(DWORD_PTR)(lists + type * 16);
+                    if (head)
+                    {
+                        g_cursors[count++] = head;
+                        if (count == (int)kMaxCursors) { Walk(count); count = 0; }
+                    }
+                }
+            }
+            Walk(count);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { ReportFault(); }
+    }
+
+    static void __stdcall BeforeProvince(DWORD world, int index)
+    {
+        if (!world || index < 0 || (index & 7)) return;
+        __try
+        {
+            DWORD begin = *(DWORD*)(DWORD_PTR)(world + 0xACC);
+            DWORD end = *(DWORD*)(DWORD_PTR)(world + 0xAD0);
+            if (!begin || end < begin || end - begin > 0x1000000 || ((end - begin) & 3)) return;
+            DWORD total = (end - begin) / 4;
+            DWORD last = ((DWORD)index + 8 < total) ? (DWORD)index + 8 : total;
+            int count = 0;
+            for (DWORD p = (DWORD)index; p < last; ++p)
+            {
+                DWORD province = *(DWORD*)(DWORD_PTR)(begin + p * 4);
+                if (!province) continue;
+                DWORD lists = *(DWORD*)(DWORD_PTR)(province + 0x194);
+                DWORD listsEnd = *(DWORD*)(DWORD_PTR)(province + 0x198);
+                if (!lists || listsEnd < lists || listsEnd - lists > 0x10000 || ((listsEnd - lists) & 15)) continue;
+                for (DWORD at = lists; at + 16 <= listsEnd; at += 16)
+                {
+                    DWORD head = *(DWORD*)(DWORD_PTR)at;
+                    if (head)
+                    {
+                        g_cursors[count++] = head;
+                        if (count == (int)kMaxCursors) { Walk(count); count = 0; }
+                    }
+                }
+            }
+            Walk(count);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER) { ReportFault(); }
+    }
+
+    static void __stdcall PrefetchOne(DWORD pop)
+    {
+        if (!pop) return;
+        for (DWORD off = 0; off < 0x280; off += 64)
+            _mm_prefetch((const char*)(DWORD_PTR)(pop + off), _MM_HINT_T0);
+    }
+
+    __declspec(naked) static void MarketThunk()
+    {
+        __asm {
+            pushad
+            pushfd
+            push dword ptr [esp + 44]
+            push dword ptr [esp + 44]
+            call BeforeMarket
+            popfd
+            popad
+            jmp dword ptr [g_marketOriginal]
+        }
+    }
+
+    __declspec(naked) static void ProvinceThunk()
+    {
+        __asm {
+            pushad
+            pushfd
+            push edi
+            push ebx
+            call BeforeProvince
+            popfd
+            popad
+            jmp dword ptr [g_provinceOriginal]
+        }
+    }
+
+    __declspec(naked) static void DistributionThunk()
+    {
+        __asm {
+            pushad
+            pushfd
+            push eax
+            call PrefetchOne
+            popfd
+            popad
+            jmp dword ptr [g_distributionOriginal]
+        }
+    }
+
+    static bool InstallCall(DWORD site, DWORD target, void* thunk, const char* name)
+    {
+        unsigned char expected[5] = { 0xE8, 0, 0, 0, 0 };
+        DWORD rel = (g_base + target) - (g_base + site + 5);
+        memcpy(expected + 1, &rel, sizeof(rel));
+        return PatchE8(site, expected, thunk, name);
+    }
+
+    static bool Install()
+    {
+        g_worldSlot = g_base + kWorldPtr;
+        g_marketOriginal = g_base + kMarketTarget;
+        g_provinceOriginal = g_base + kProvinceTarget;
+        g_distributionOriginal = g_base + kDistributionTarget;
+        int active = 0;
+        if (InstallCall(kMarketCall, kMarketTarget, (void*)&MarketThunk, "PopPrefetch market")) ++active;
+        if (InstallCall(kProvinceCall, kProvinceTarget, (void*)&ProvinceThunk, "PopPrefetch province")) ++active;
+        if (InstallCall(kDistributionCall, kDistributionTarget, (void*)&DistributionThunk, "PopPrefetch distribution")) ++active;
+        Log("PopPrefetch: active on %d of 3 pop loops", active);
+        return active == 3;
+    }
+}
+
+// Small persistent worker pool used only by PATCH_PARALLEL_DECISIONS.
+static bool g_fastAiQueueInstalled = false;
+namespace DecisionWorkers
+{
+    typedef void (*TaskFn)(int, void*);
+    static const int kMaxWorkers = 7;
+    struct Pool {
+        SRWLOCK lock;
+        CONDITION_VARIABLE wake, done;
+        DWORD generation;
+        int busy, count;
+        TaskFn task;
+        void* context;
+        volatile LONG next;
+        WORD x87;
+        DWORD mxcsr;
+        Pool() : generation(0), busy(0), count(0), task(0), context(0), next(0), x87(0), mxcsr(0)
+        {
+            InitializeSRWLock(&lock);
+            InitializeConditionVariable(&wake);
+            InitializeConditionVariable(&done);
+        }
+    };
+    static Pool g_pool;
+    static int g_workers = -1;
+    static void ReadFpu(WORD* cw, DWORD* csr)
+    {
+        WORD c; DWORD m;
+        __asm {
+            fnstcw c
+            stmxcsr m
+        }
+        *cw = c; *csr = m;
+    }
+    static void WriteFpu(WORD cw, DWORD csr)
+    {
+        __asm {
+            fldcw cw
+            ldmxcsr csr
+        }
+    }
+    static void Work()
+    {
+        for (;;) {
+            LONG i = InterlockedIncrement(&g_pool.next) - 1;
+            if (i >= g_pool.count) return;
+            g_pool.task((int)i, g_pool.context);
+        }
+    }
+    static DWORD WINAPI WorkerMain(void*)
+    {
+        DWORD seen = 0;
+        for (;;) {
+            AcquireSRWLockExclusive(&g_pool.lock);
+            while (g_pool.generation == seen)
+                SleepConditionVariableSRW(&g_pool.wake, &g_pool.lock, INFINITE, 0);
+            seen = g_pool.generation;
+            WORD cw = g_pool.x87; DWORD csr = g_pool.mxcsr;
+            ReleaseSRWLockExclusive(&g_pool.lock);
+            WriteFpu(cw, csr);
+            Work();
+            AcquireSRWLockExclusive(&g_pool.lock);
+            if (--g_pool.busy == 0) WakeConditionVariable(&g_pool.done);
+            ReleaseSRWLockExclusive(&g_pool.lock);
+        }
+    }
+    static void Start()
+    {
+        SYSTEM_INFO si; GetSystemInfo(&si);
+        int wanted = (int)si.dwNumberOfProcessors - 1;
+        if (wanted < 1) wanted = 1;
+        if (wanted > kMaxWorkers) wanted = kMaxWorkers;
+        g_workers = 0;
+        for (int i = 0; i < wanted; ++i) {
+            HANDLE h = CreateThread(0, 0, &WorkerMain, 0, 0, 0);
+            if (!h) break;
+            CloseHandle(h); ++g_workers;
+        }
+        Log("ParallelDecisions: started %d worker threads", g_workers);
+    }
+    static int Workers() { return g_workers < 0 ? 0 : g_workers; }
+    static void Run(int count, TaskFn task, void* context)
+    {
+        if (count <= 0) return;
+        if (g_workers < 0) Start();
+        WORD cw; DWORD csr; ReadFpu(&cw, &csr);
+        if (g_workers == 0 || count == 1) {
+            for (int i = 0; i < count; ++i) task(i, context);
+            return;
+        }
+        AcquireSRWLockExclusive(&g_pool.lock);
+        g_pool.task = task; g_pool.context = context; g_pool.count = count;
+        g_pool.next = 0; g_pool.x87 = cw; g_pool.mxcsr = csr; g_pool.busy = g_workers;
+        ++g_pool.generation;
+        ReleaseSRWLockExclusive(&g_pool.lock);
+        WakeAllConditionVariable(&g_pool.wake);
+        Work();
+        AcquireSRWLockExclusive(&g_pool.lock);
+        while (g_pool.busy > 0)
+            SleepConditionVariableSRW(&g_pool.done, &g_pool.lock, INFINITE, 0);
+        ReleaseSRWLockExclusive(&g_pool.lock);
+    }
+}
+
+
+
+// PATCH_CULL_DECISION_CHECKS: give AI decision loops a private, per-country
+// manager containing only decisions whose simple top-level gates can pass.
+// The player's UI continues to read the game's original decision manager.
+namespace DecisionCull
+{
+    static const DWORD kWorldDate = 0xE588E8;
+    static const DWORD kCountryManager = 0xE587E4;
+    static const DWORD kDecisionManager = 0xF19730;
+    static const DWORD kGetter = 0x475040;
+    static const DWORD kGetterSites[2] = { 0x45D34F, 0x45D459 };
+    static const DWORD kAiCall = 0x41EA9B;
+    static const DWORD kAiFunction = 0x421190;
+    static const DWORD kScopeCtor = 0x4A8650;
+    static const DWORD kEvaluate = 0x4B8260;
+    static const DWORD kAndVtable = 0x9F9994;
+    static const DWORD kNotVtable = 0xA2FBA8;
+    static const DWORD kTagVtable = 0xA30C80;
+    static const DWORD kCountryFlagVtable = 0xA307E8;
+    static const DWORD kGlobalFlagVtable = 0xA30820;
+    static const DWORD kAiVtable = 0xA30EE8;
+    static const DWORD kClrCountrySlot = 0xA2ACEC;
+    static const DWORD kClrGlobalSlot = 0xA2ADCC;
+    static const DWORD kClrCountryFn = 0x482A40;
+    static const DWORD kClrGlobalFn = 0x482BA0;
+    static const DWORD kRefreshDays = 90;
+    static const DWORD kCountryAiObject = 0x208, kAiObjectTag = 0x30;
+    static const DWORD kDecisionAllow = 0x40, kDecisionCheckSlot = 0x18;
+    static const DWORD kDecisionCheckTrivial = 0x631490, kAiScopeParent = 0x2D;
+    static const DWORD kQueueNodeCountry = 0x04, kQueueNodeNext = 0x0C;
+
+    struct DecisionInfo { DWORD ptr; int list; int tagCountry; DWORD flagGate; DWORD aiGate; };
+    struct CountryLists { std::vector<DWORD> a, b; int day; DWORD version; bool dirty; CountryLists() : day(-1), version(0), dirty(true) {} };
+    typedef char (__fastcall *EvalFn)(void*, void*, void*);
+    typedef void* (__fastcall *ScopeCtorFn)(void*, void*, void*);
+    typedef int (__fastcall *AiFn)(void*, void*);
+    typedef void (__fastcall *EffectFn)(void*, void*, void*, void*);
+
+    static std::vector<DecisionInfo> g_decisions;
+    static std::vector<CountryLists> g_countries;
+    static DWORD g_fakeManager[14];
+    static DWORD g_originalManager, g_originalAi, g_originalClrCountry, g_originalClrGlobal;
+    static DWORD g_lastDay = 0xFFFFFFFF;
+    static DWORD g_listSignature[4] = {};
+    static bool g_installed = false;
+    static int g_parallelMode = 0;
+    struct Precomputed { std::vector<DWORD> a, b; DWORD ai, version, frame, queued; bool ok; Precomputed() : ai(0), version(0), frame(0), queued(0), ok(false) {} };
+    static std::vector<Precomputed> g_precomputed;
+    static std::vector<DWORD> g_pending;
+    static DWORD g_parallelFrame = 0;
+    static bool g_parallelFrameOpen = false;
+    static unsigned long g_parallelMismatches = 0;
+
+    static DWORD R(DWORD p) { return *(DWORD*)(DWORD_PTR)p; }
+    static DWORD Manager() { return R(g_base + kDecisionManager); }
+    static int Day()
+    {
+        DWORD world = R(g_base + kWorldDate);
+        return world ? (int)(R(world + 0xB0C) / 24) : -1;
+    }
+    static DWORD Country(DWORD i)
+    {
+        DWORD m = R(g_base + kCountryManager);
+        return m && i < R(m) ? R(R(m + 4) + i * 4) : 0;
+    }
+    static bool Eval(DWORD trigger, void* scope)
+    {
+        DWORD vt = R(trigger);
+        EvalFn fn = (EvalFn)(DWORD_PTR)R(vt + 0x18);
+        return fn((void*)(DWORD_PTR)trigger, 0, scope) != 0;
+    }
+    static bool OnlyFlags(DWORD block)
+    {
+        DWORD at = R(block + 8), end = R(block + 12);
+        if (end <= at || end - at > 0x10000 || ((end - at) & 3)) return false;
+        for (; at < end; at += 4)
+        {
+            DWORD child = R(at), vt = R(child);
+            if (vt != g_base + kCountryFlagVtable && vt != g_base + kGlobalFlagVtable) return false;
+            if (*(BYTE*)(DWORD_PTR)(child + 0x18) || *(BYTE*)(DWORD_PTR)(child + 0x19)) return false;
+        }
+        return true;
+    }
+    static void Classify(DecisionInfo& d)
+    {
+        DWORD potential = d.ptr + 0x24;
+        DWORD at = R(potential + 8), end = R(potential + 12);
+        for (; at < end; at += 4)
+        {
+            DWORD child = R(at), vt = R(child);
+            if (vt == g_base + kTagVtable && d.tagCountry < 0 &&
+                !*(BYTE*)(DWORD_PTR)(child + 0x18) && !*(BYTE*)(DWORD_PTR)(child + 0x19))
+                d.tagCountry = (int)R(child + 0x20);
+            else if (vt == g_base + kNotVtable && !d.flagGate && OnlyFlags(child))
+                d.flagGate = child;
+            else if (vt == g_base + kAiVtable && !d.aiGate && !*(BYTE*)(DWORD_PTR)(child + 0x18))
+                d.aiGate = child;
+        }
+    }
+    static void Refresh()
+    {
+        DWORD manager = Manager();
+        if (!manager) return;
+        std::vector<DecisionInfo> fresh;
+        const DWORD lists[2] = { 0x0C, 0x28 };
+        for (int n = 0; n < 2; ++n)
+        {
+            DWORD begin = R(manager + lists[n]), end = R(manager + lists[n] + 4);
+            if (end < begin || end - begin > 0x100000 || ((end - begin) & 3)) return;
+            g_listSignature[n * 2] = begin;
+            g_listSignature[n * 2 + 1] = end;
+            for (DWORD at = begin; at < end; at += 4)
+            {
+                DecisionInfo d = { R(at), n, -1, 0, 0 };
+                if (R(d.ptr + 0x24) == g_base + kAndVtable) Classify(d);
+                fresh.push_back(d);
+            }
+        }
+        g_decisions.swap(fresh);
+        DWORD countries = R(g_base + kCountryManager);
+        DWORD count = countries ? R(countries) : 0;
+        if (count > 10000) count = 0;
+        g_countries.clear();
+        g_countries.resize(count);
+        g_lastDay = (DWORD)Day();
+        Log("DecisionCull: scanned %u decisions for %u countries", (unsigned)g_decisions.size(), count);
+    }
+    static DWORD Build(DWORD index, int day)
+    {
+        if (index >= g_countries.size()) return g_originalManager;
+        CountryLists& lists = g_countries[index];
+        if (!lists.dirty && lists.day >= 0 && day - lists.day < (int)kRefreshDays) return (DWORD)(DWORD_PTR)g_fakeManager;
+        lists.a.clear(); lists.b.clear(); lists.day = day; lists.dirty = false; ++lists.version;
+        DWORD country = Country(index);
+        if (!country) return (DWORD)(DWORD_PTR)g_fakeManager;
+        unsigned char scope[0x60] = {};
+        ScopeCtorFn ctor = (ScopeCtorFn)(DWORD_PTR)(g_base + kScopeCtor);
+        ctor(scope, 0, 0);
+        memcpy(scope + 8, (void*)(DWORD_PTR)(country + 0x1C), 8);
+        for (size_t i = 0; i < g_decisions.size(); ++i)
+        {
+            const DecisionInfo& d = g_decisions[i];
+            if (d.tagCountry >= 0 && (DWORD)d.tagCountry != index) continue;
+            if (d.aiGate && !Eval(d.aiGate, scope)) continue;
+            if (d.flagGate && !Eval(d.flagGate, scope)) continue;
+            (d.list ? lists.b : lists.a).push_back(d.ptr);
+        }
+        return (DWORD)(DWORD_PTR)g_fakeManager;
+    }
+    static void SetList(DWORD off, const std::vector<DWORD>& v)
+    {
+        DWORD begin = v.empty() ? 0 : (DWORD)(DWORD_PTR)v.data();
+        *(DWORD*)((BYTE*)g_fakeManager + off) = begin;
+        *(DWORD*)((BYTE*)g_fakeManager + off + 4) = begin + (DWORD)v.size() * 4;
+        *(DWORD*)((BYTE*)g_fakeManager + off + 8) = begin + (DWORD)v.size() * 4;
+    }
+    static void SyncCurrent()
+    {
+        DWORD currentManager = Manager();
+        if (!currentManager) return;
+        g_originalManager = currentManager;
+        DWORD day = (DWORD)Day();
+        if ((int)day < 0) return;
+        DWORD a = R(currentManager + 0x0C), ae = R(currentManager + 0x10);
+        DWORD b = R(currentManager + 0x28), be = R(currentManager + 0x2C);
+        DWORD countryManager = R(g_base + kCountryManager);
+        DWORD countryCount = countryManager ? R(countryManager) : 0;
+        if (countryCount > 10000) countryCount = 0;
+        if (g_lastDay != day || g_decisions.empty() || a != g_listSignature[0] || ae != g_listSignature[1] ||
+            b != g_listSignature[2] || be != g_listSignature[3]) Refresh();
+        else if (g_countries.size() != countryCount) g_countries.resize(countryCount);
+    }
+    static DWORD __cdecl ForCountry(DWORD index)
+    {
+        SyncCurrent();
+        DWORD currentManager = Manager();
+        if (!currentManager) return 0;
+        g_originalManager = currentManager;
+        DWORD day = (DWORD)Day();
+        if ((int)day < 0) return currentManager;
+        DWORD fake = Build(index, (int)day);
+        if (fake != g_originalManager)
+        {
+            memcpy(g_fakeManager, (void*)(DWORD_PTR)g_originalManager, sizeof(g_fakeManager));
+            SetList(0x0C, g_countries[index].a);
+            SetList(0x28, g_countries[index].b);
+        }
+        return fake;
+    }
+    static DWORD (__cdecl * volatile g_forCountry)(DWORD) = &ForCountry;
+
+    static void MakeAiScope(BYTE* scope, DWORD ai)
+    {
+        memset(scope, 0, 0x60);
+        ScopeCtorFn ctor = (ScopeCtorFn)(DWORD_PTR)(g_base + kScopeCtor);
+        ctor(scope, 0, (void*)(DWORD_PTR)kAiScopeParent);
+        memcpy(scope + 8, (void*)(DWORD_PTR)(ai + kAiObjectTag), 8);
+    }
+    static int DecisionPasses(DWORD decision, void* scope)
+    {
+        if (R(R(decision) + kDecisionCheckSlot) != g_base + kDecisionCheckTrivial) return -1;
+        return Eval(decision + 0x24, scope) && Eval(decision + kDecisionAllow, scope) ? 1 : 0;
+    }
+    static void PrecomputeCountry(int taskIndex, void*)
+    {
+        DWORD country = g_pending[(size_t)taskIndex];
+        Precomputed& p = g_precomputed[country];
+        const CountryLists& lists = g_countries[country];
+        BYTE scope[0x60];
+        MakeAiScope(scope, p.ai);
+        p.ok = true;
+        for (int which = 0; which < 2 && p.ok; ++which)
+        {
+            const std::vector<DWORD>& input = which == 0 ? lists.a : lists.b;
+            std::vector<DWORD>& output = which == 0 ? p.a : p.b;
+            for (size_t i = 0; i < input.size(); ++i)
+            {
+                int passed = DecisionPasses(input[i], scope);
+                if (passed < 0) { p.ok = false; break; }
+                if (passed) output.push_back(input[i]);
+            }
+        }
+        p.frame = g_parallelFrame;
+    }
+    static void FrameBegin(void* queueRef)
+    {
+        if (!g_parallelMode || !queueRef) return;
+        ++g_parallelFrame;
+        g_parallelFrameOpen = true;
+        SyncCurrent();
+        DWORD buckets = R((DWORD)(DWORD_PTR)queueRef);
+        int day = Day();
+        if (!buckets || day < 0 || g_decisions.empty()) return;
+        if (g_precomputed.size() != g_countries.size()) g_precomputed.assign(g_countries.size(), Precomputed());
+        g_pending.clear();
+        for (DWORD node = R(buckets); node; node = R(node + kQueueNodeNext))
+        {
+            DWORD country = R(node + kQueueNodeCountry);
+            if (country >= g_countries.size() || g_precomputed[country].queued == g_parallelFrame) continue;
+            DWORD object = Country(country);
+            DWORD ai = object ? R(object + kCountryAiObject) : 0;
+            if (!ai) continue;
+            Build(country, day);
+            CountryLists& lists = g_countries[country];
+            Precomputed& p = g_precomputed[country];
+            p.a.clear(); p.b.clear();
+            p.a.reserve(lists.a.size()); p.b.reserve(lists.b.size());
+            p.ai = ai; p.version = lists.version; p.frame = 0; p.queued = g_parallelFrame; p.ok = false;
+            g_pending.push_back(country);
+        }
+        if (!g_pending.empty())
+            DecisionWorkers::Run((int)g_pending.size(), &PrecomputeCountry, 0);
+    }
+    static void FrameEnd() { g_parallelFrameOpen = false; }
+    static const Precomputed* PrecomputedFor(DWORD country, DWORD ai)
+    {
+        if (!g_parallelFrameOpen || country >= g_precomputed.size()) return 0;
+        const Precomputed& p = g_precomputed[country];
+        if (p.frame != g_parallelFrame || !p.ok || p.ai != ai || p.version != g_countries[country].version) return 0;
+        return &p;
+    }
+    static void ShadowCompare(DWORD country, DWORD ai, const Precomputed& p)
+    {
+        const CountryLists& lists = g_countries[country];
+        BYTE scope[0x60]; MakeAiScope(scope, ai);
+        for (int which = 0; which < 2; ++which)
+        {
+            const std::vector<DWORD>& input = which == 0 ? lists.a : lists.b;
+            const std::vector<DWORD>& batch = which == 0 ? p.a : p.b;
+            size_t at = 0;
+            for (size_t i = 0; i < input.size(); ++i)
+            {
+                bool parallel = at < batch.size() && batch[at] == input[i];
+                if (parallel) ++at;
+                int serial = DecisionPasses(input[i], scope);
+                if (serial < 0 || (serial != 0) != parallel)
+                {
+                    ++g_parallelMismatches;
+                    if (g_parallelMismatches <= 20)
+                        Log("ParallelDecisions: mismatch day=%d country=%u decision=%08X serial=%d parallel=%d",
+                            Day(), country, input[i], serial, parallel ? 1 : 0);
+                }
+            }
+        }
+    }
+
+    __declspec(naked) static void GetterStub()
+    {
+        __asm {
+            mov eax, dword ptr [esi + 0x0C]
+            push eax
+            call dword ptr [g_forCountry]
+            add esp, 4
+            ret
+        }
+    }
+    static int __fastcall AiHook(void* ai, void*)
+    {
+        if (!ai || !g_originalAi) return 0;
+        DWORD* global = (DWORD*)(g_base + kDecisionManager);
+        DWORD real = *global;
+        DWORD country = R((DWORD)(DWORD_PTR)ai + 0x34);
+        DWORD fake = ForCountry(country);
+        if (fake == real) return ((AiFn)(DWORD_PTR)g_originalAi)(ai, 0);
+        if (g_parallelMode)
+        {
+            DWORD aiObject = (DWORD)(DWORD_PTR)ai;
+            const Precomputed* ready = PrecomputedFor(country, aiObject);
+            if (ready)
+            {
+                if (g_parallelMode == 1)
+                {
+                    SetList(0x0C, ready->a);
+                    SetList(0x28, ready->b);
+                }
+                else if (g_parallelMode == 2)
+                    ShadowCompare(country, aiObject, *ready);
+            }
+        }
+        *global = fake;
+        int result = 0;
+        __try { result = ((AiFn)(DWORD_PTR)g_originalAi)(ai, 0); }
+        __finally { *global = real; }
+        return result;
+    }
+    static void Dirty(DWORD index)
+    {
+        if (index < g_countries.size()) g_countries[index].dirty = true;
+    }
+    static void __fastcall ClearCountry(void* self, void*, void* scope, void* arg2)
+    {
+        ((EffectFn)(DWORD_PTR)g_originalClrCountry)(self, 0, scope, arg2);
+        if (scope) Dirty(R((DWORD)(DWORD_PTR)scope + 0x0C));
+    }
+    static void __fastcall ClearGlobal(void* self, void*, void* scope, void* arg2)
+    {
+        ((EffectFn)(DWORD_PTR)g_originalClrGlobal)(self, 0, scope, arg2);
+        for (size_t i = 0; i < g_countries.size(); ++i) g_countries[i].dirty = true;
+    }
+    static bool CheckCall(DWORD site, DWORD target)
+    {
+        unsigned char expected[5] = { 0xE8 };
+        DWORD rel = (g_base + target) - (g_base + site + 5);
+        memcpy(expected + 1, &rel, 4);
+        return memcmp((void*)(g_base + site), expected, 5) == 0;
+    }
+    static bool Install()
+    {
+        if (g_installed) return true;
+        int requestedParallel = g_settings.patchParallelDecisions;
+        if (requestedParallel && !g_settings.patchCullDecisionChecks)
+        {
+            Log("ParallelDecisions: requires PATCH_CULL_DECISION_CHECKS=1; disabled");
+            requestedParallel = 0;
+        }
+        if (requestedParallel && !g_fastAiQueueInstalled)
+        {
+            Log("ParallelDecisions: requires PATCH_FAST_AI_QUEUE=1 with a valid hook; disabled");
+            requestedParallel = 0;
+        }
+        if (requestedParallel && memcmp((void*)(g_base + kDecisionCheckTrivial), "\xB0\x01\xC3", 3) != 0)
+        {
+            Log("ParallelDecisions: decision-check signature differs; parallel mode disabled");
+            requestedParallel = 0;
+        }
+        if (!CheckCall(kAiCall, kAiFunction) || !CheckCall(kGetterSites[0], kGetter) || !CheckCall(kGetterSites[1], kGetter) ||
+            memcmp((void*)(g_base + kAiFunction), "\x55\x8B\xEC\x6A\xFF", 5) != 0 ||
+            R(g_base + kAndVtable + 0x18) != g_base + kEvaluate ||
+            memcmp((void*)(g_base + kEvaluate), "\x55\x8B\xEC", 3) != 0 ||
+            memcmp((void*)(g_base + kScopeCtor), "\x55\x8B\xEC", 3) != 0 ||
+            R(g_base + kClrCountrySlot) != g_base + kClrCountryFn || R(g_base + kClrGlobalSlot) != g_base + kClrGlobalFn)
+        {
+            Log("DecisionCull: executable signatures differ; left disabled"); return false;
+        }
+        g_originalManager = Manager();
+        g_originalAi = g_base + kAiFunction;
+        g_originalClrCountry = R(g_base + kClrCountrySlot);
+        g_originalClrGlobal = R(g_base + kClrGlobalSlot);
+        DWORD pCountry = (DWORD)(DWORD_PTR)&ClearCountry, pGlobal = (DWORD)(DWORD_PTR)&ClearGlobal;
+        if (!PatchBytes(kClrCountrySlot, &g_originalClrCountry, &pCountry, 4, "DecisionCull country flag") ||
+            !PatchBytes(kClrGlobalSlot, &g_originalClrGlobal, &pGlobal, 4, "DecisionCull global flag"))
+            return false;
+        for (int i = 0; i < 2; ++i)
+            if (!PatchE8(kGetterSites[i], (const unsigned char*)(g_base + kGetterSites[i]), (void*)&GetterStub, "DecisionCull getter"))
+                return false;
+        if (!PatchE8(kAiCall, (const unsigned char*)(g_base + kAiCall), (void*)&AiHook, "DecisionCull AI update"))
+            return false;
+        g_installed = true;
+        Refresh();
+        g_parallelMode = requestedParallel;
+        Log("DecisionCull: installed (AI decision checks only), parallel mode %d", g_parallelMode);
+        return true;
+    }
+}
+
+namespace RelationPrefetch
+{
+    static const DWORD kManagerSlot=0xE587E4, kWorldSlotRva=0xE588E8;
+    static const DWORD kRecalcCall=0x1089DB, kRecalc=0x115490, kMarketCall=0x087483, kMarket=0x122CF0;
+    static const DWORD kPurgeCall=0x10AC44, kPurge=0x52E290, kPairCall=0x10B6B9, kPair=0x12FCD0;
+    static const DWORD kRecalcOffsets[]={0,0x2C,0x38,0x70}, kMarketOffsets[]={0x34}, kPurgeOffsets[]={0x20,0x50,0xA8};
+    struct CountryLists { std::vector<DWORD> live,dead,all; int day,count; CountryLists():day(-1),count(-1){} };
+    static CountryLists g_lists;
+    static DWORD g_managerSlot,g_worldSlot,g_recalc,g_market,g_purge,g_pair,g_purgeSelf;
+    static volatile BYTE g_skipPurge;
+    static DWORD R(DWORD p){return *(DWORD*)(DWORD_PTR)p;}
+    static const CountryLists* Lists()
+    {
+        DWORD manager=R(g_managerSlot),world=R(g_worldSlot); if(!manager||!world)return 0;
+        int count=(int)R(manager),day=(int)(R(world+0xB0C)/24);
+        if(count<0||count>10000)return 0;
+        if(count==g_lists.count&&day==g_lists.day)return &g_lists;
+        DWORD array=R(manager+4); if(!array&&count)return 0;
+        g_lists.live.clear();g_lists.dead.clear();g_lists.all.clear();
+        for(int i=0;i<count;++i){
+            DWORD c=R(array+i*4);if(!c)continue;
+            DWORD index=R(c+0x20);bool provinces=R(c+0x9DC)!=R(c+0x9D8);
+            if(i>0)g_lists.all.push_back(index);
+            if(provinces)g_lists.live.push_back(index);else if(index)g_lists.dead.push_back(index);
+        }
+        g_lists.count=count;g_lists.day=day;return &g_lists;
+    }
+    static void Prefetch(DWORD rels,const std::vector<DWORD>& ids,const DWORD* offsets,int n)
+    {
+        for(size_t i=0;i<ids.size();++i){DWORD rel=R(rels+ids[i]*4);if(!rel)continue;
+            for(int k=0;k<n;++k)_mm_prefetch((const char*)(DWORD_PTR)(rel+offsets[k]),_MM_HINT_T0);}
+    }
+    static void __stdcall BeforeRecalc(DWORD c)
+    {
+        const CountryLists*l=Lists();DWORD r=c?R(c+0xBE8):0;if(!l||!r)return;
+        Prefetch(r,l->live,kRecalcOffsets,4);Prefetch(r,l->dead,kRecalcOffsets+1,1);
+    }
+    static void __stdcall BeforeMarket(DWORD c)
+    {
+        const CountryLists*l=Lists();DWORD r=c?R(c+0xBE8):0;if(l&&r)Prefetch(r,l->live,kMarketOffsets,1);
+    }
+    static BYTE __stdcall BeforePurge(DWORD rel,DWORD self)
+    {
+        if(self!=g_purgeSelf){g_purgeSelf=self;const CountryLists*l=Lists();DWORD r=self?R(self+0xBE8):0;
+            if(l&&r)Prefetch(r,l->live,kPurgeOffsets,3);}
+        if(!rel)return 0;
+        return R(rel+0x50)==0&&R(rel+0xA8)==0&&R(rel+0x2C)==0&&R(rel+0x30)==0&&R(rel+0x28)==0&&R(rel+0x20)==0;
+    }
+    __declspec(naked) static void RecalcThunk()
+    {
+        __asm {
+            pushad
+            pushfd
+            push dword ptr [esp + 40]
+            call BeforeRecalc
+            popfd
+            popad
+            jmp dword ptr [g_recalc]
+        }
+    }
+    __declspec(naked) static void MarketThunk()
+    {
+        __asm {
+            pushad
+            pushfd
+            push dword ptr [esp + 40]
+            call BeforeMarket
+            popfd
+            popad
+            jmp dword ptr [g_market]
+        }
+    }
+    __declspec(naked) static void PurgeThunk()
+    {
+        __asm{
+            pushad
+            pushfd
+            push ebx
+            push dword ptr [esp+44]
+            call BeforePurge
+            mov byte ptr [g_skipPurge],al
+            popfd
+            popad
+            cmp byte ptr [g_skipPurge],0
+            jne skip_purge
+            jmp dword ptr [g_purge]
+        skip_purge:
+            ret 4
+        }
+    }
+    static void __stdcall BeforePair(DWORD c)
+    {
+        DWORD w=R(g_worldSlot);if(!w||!c)return;
+        DWORD self=R(c+0x20),begin=R(w+0xADC),end=R(w+0xAE0);
+        if(!begin||end<begin||end-begin>0x100000||((end-begin)&3))return;
+        for(DWORD at=begin;at<end;at+=4){DWORD other=R(at);if(other)_mm_prefetch((const char*)(DWORD_PTR)(other+0x1580),_MM_HINT_T0);}
+        for(DWORD at=begin;at<end;at+=4){DWORD other=R(at);if(other){DWORD arr=R(other+0x1580);if(arr)_mm_prefetch((const char*)(DWORD_PTR)(arr+self*8),_MM_HINT_T0);}}
+    }
+    __declspec(naked) static void PairThunk()
+    {
+        __asm {
+            pushad
+            pushfd
+            push dword ptr [esp + 40]
+            call BeforePair
+            popfd
+            popad
+            jmp dword ptr [g_pair]
+        }
+    }
+    // The AI's per-country target scan is a separate loader option. It walks
+    // every country (including tags without provinces) and reads relation+0x34.
+    static const DWORD kAiScanSlot = 0xA2773C, kAiScan = 0x44B0F0, kAiCountryIndex = 0x38;
+    static DWORD g_aiScan;
+    static void __stdcall BeforeAiScan(DWORD ai)
+    {
+        DWORD manager = R(g_managerSlot);
+        const CountryLists* lists = Lists();
+        if (!manager || !ai || !lists) return;
+        int countries = (int)R(manager);
+        int selfIndex = (int)R(ai + kAiCountryIndex);
+        if (selfIndex <= 0 || selfIndex >= countries) return;
+        DWORD array = R(manager + 4);
+        if (!array) return;
+        DWORD self = R(array + selfIndex * 4);
+        DWORD relations = self ? R(self + 0xBE8) : 0;
+        if (relations)
+        {
+            const DWORD offset = 0x34;
+            Prefetch(relations, lists->all, &offset, 1);
+        }
+    }
+    __declspec(naked) static void AiScanThunk()
+    {
+        __asm {
+            pushad
+            pushfd
+            push ecx
+            call BeforeAiScan
+            popfd
+            popad
+            jmp dword ptr [g_aiScan]
+        }
+    }
+    static bool InstallAi()
+    {
+        g_managerSlot = g_base + kManagerSlot;
+        g_worldSlot = g_base + kWorldSlotRva;
+        g_aiScan = g_base + kAiScan;
+        DWORD expected = g_aiScan, replacement = (DWORD)(DWORD_PTR)&AiScanThunk;
+        if (!PatchBytes(kAiScanSlot, &expected, &replacement, 4, "AiRelationPrefetch vtable"))
+        {
+            Log("AiRelationPrefetch: vtable slot not recognised; left disabled");
+            return false;
+        }
+        Log("AiRelationPrefetch: active before the AI target scan");
+        return true;
+    }
+    static bool Matches(DWORD site,DWORD target)
+    {
+        unsigned char x[5]={0xE8,0,0,0,0};DWORD rel=g_base+target-(g_base+site+5);memcpy(x+1,&rel,4);
+        return memcmp((void*)(g_base+site),x,5)==0;
+    }
+    static bool Install()
+    {
+        if(!Matches(kRecalcCall,kRecalc)||!Matches(kMarketCall,kMarket)||!Matches(kPurgeCall,kPurge)||!Matches(kPairCall,kPair)){
+            Log("RelationPrefetch: executable signatures differ; left disabled");return false;}
+        g_managerSlot=g_base+kManagerSlot;g_worldSlot=g_base+kWorldSlotRva;
+        g_recalc=g_base+kRecalc;g_market=g_base+kMarket;g_purge=g_base+kPurge;g_pair=g_base+kPair;
+        int active=0;
+        if(PatchE8(kRecalcCall,(const unsigned char*)(g_base+kRecalcCall),(void*)&RecalcThunk,"RelationPrefetch recalc"))++active;
+        if(PatchE8(kMarketCall,(const unsigned char*)(g_base+kMarketCall),(void*)&MarketThunk,"RelationPrefetch market"))++active;
+        if(PatchE8(kPurgeCall,(const unsigned char*)(g_base+kPurgeCall),(void*)&PurgeThunk,"RelationPrefetch purge"))++active;
+        if(PatchE8(kPairCall,(const unsigned char*)(g_base+kPairCall),(void*)&PairThunk,"RelationPrefetch pair"))++active;
+        Log("RelationPrefetch: active on %d of 4 relation scans",active);return active==4;
+    }
+}
+
+
+
+// PATCH_CULL_CB_CHECKS implementation
+// PATCH_CULL_CB_CHECKS: in the two AI target scans, cache attacker-only
+// can_use failures for the current day and skip CB types that cannot pass.
+namespace CbCull
+{
+    static const DWORD kScanFn = 0x52EDE0;
+    static const DWORD kScopeCtor = 0x4A8650;
+    static const DWORD kCallSites[2] = { 0x45DCDA, 0x45E5FB };
+    static const DWORD kWorldPtr = 0xE588E8;
+    static const DWORD kCountryManager = 0xE587E4;
+    static const DWORD kCbManager = 0xF1ACAC;
+    static const DWORD kAndVtable = 0x9F9994;
+    static const DWORD kOrVtable = 0xA2FB70;
+    static const DWORD kNotVtable = 0xA2FBA8;
+    static const DWORD kAttackerClasses[] = { 0xA308C8, 0xA30B30, 0xA30B68, 0xA30C80, 0xA30CB8, 0xA30D28, 0xA30D60, 0xA30FC8, 0xA31070, 0xA310A8, 0xA310E0, 0xA31118, 0xA31380, 0xA313F0, 0xA31428, 0xA31460, 0xA31C78, 0xA32228, 0xA323E8, 0xA32420, 0xA32E68, 0xA32EA0, 0xA2FC18, 0xA2FC50, 0xA2FE48, 0xA2FE10, 0xA2FE80, 0xA30008, 0xA2FF98, 0xA2FFD0, 0xA2FC88, 0xA30040, 0xA30078, 0xA30158, 0xA30190, 0xA30200, 0xA30270, 0xA302E0, 0xA30318, 0xA30350, 0xA30388, 0xA30430, 0xA303F8, 0xA303C0, 0xA30468, 0xA30510, 0xA304A0, 0xA304D8, 0xA31AB8, 0xA30628, 0xA305B8, 0xA2FEB8, 0xA30580, 0xA30E78, 0xA2FDD8, 0xA2FCC0, 0xA2FCF8, 0xA2FD30, 0xA2FD68, 0xA2FDA0, 0xA307B0, 0xA307E8, 0xA30820, 0xA30858, 0xA30890, 0xA30938, 0xA309A8, 0xA30AF8, 0xA30BA0, 0xA30BD8, 0xA30C10, 0xA30C48, 0xA30D98, 0xA30DD0, 0xA30E08, 0xA30E40, 0xA30EB0, 0xA30EE8, 0xA30F58, 0xA30F20, 0xA30F90, 0xA31000, 0xA31038, 0xA31150, 0xA31230, 0xA31268, 0xA31188, 0xA312A0, 0xA312D8, 0xA31310, 0xA31348, 0xA31498, 0xA314D0, 0xA315B0, 0xA315E8, 0xA31690, 0xA316C8, 0xA317A8, 0xA317E0, 0xA31818, 0xA31850, 0xA318F8, 0xA31930, 0xA31968, 0xA319A0, 0xA319D8, 0xA31A10, 0xA31A48, 0xA31A80, 0xA31AF0, 0xA31BD0, 0xA31C40, 0xA31CB0, 0xA31D90, 0xA31CE8, 0xA31D20, 0xA31D58, 0xA31E70, 0xA31EA8, 0xA31EE0, 0xA31F50, 0xA31FC0, 0xA31F18, 0xA31F88, 0xA31FF8, 0xA32030, 0xA32068, 0xA320A0, 0xA320D8, 0xA32110, 0xA32148, 0xA32180, 0xA32A78, 0xA32AB0, 0xA32AE8, 0xA32B20, 0xA32B58, 0xA32B90, 0xA32BC8, 0xA32C00, 0xA322D0, 0xA32298, 0xA32308, 0xA31DC8, 0xA31E38, 0xA32340, 0xA32378, 0xA323B0, 0xA32490, 0xA32458, 0xA324C8, 0xA32538, 0xA32570, 0xA325A8, 0xA325E0, 0xA32618, 0xA32650, 0xA32730, 0xA32768, 0xA327A0, 0xA327D8, 0xA32688, 0xA326C0, 0xA326F8, 0xA32848, 0xA32880, 0xA328B8, 0xA2FEF0, 0xA2FF28, 0xA2FF60, 0xA300E8, 0xA30238, 0xA30120, 0xA32A08, 0xA32928, 0xA32998, 0xA32960, 0xA318C0, 0xA300B0, 0xA32D50, 0xA32D88, 0xA32DC0, 0xA32DF8, 0xA32E30, 0xA32ED8, 0xA32F10, 0xA32F48, 0xA32F80, 0xA33028, 0xA33060, 0xA33098, 0xA330D0, 0xA33108, 0xA33140, 0xA33178, 0xA331B0 };
+    static const DWORD kAttackerClassCount = sizeof(kAttackerClasses) / sizeof(kAttackerClasses[0]);
+
+    typedef char (__stdcall *ScanFn)(void*, void*, void*);
+    typedef char (__fastcall *EvalFn)(void*, void*, void*);
+    typedef char (__fastcall *RealFn)(void*, void*);
+    typedef void* (__fastcall *ScopeCtorFn)(void*, void*, void*);
+    struct TypeInfo { DWORD type; bool real; bool always; std::vector<DWORD> attackerOnly; };
+    struct AttackerState { int day; std::vector<BYTE> dead; std::vector<DWORD> liveAlways; AttackerState() : day(-1) {} };
+    struct ScopePair { __declspec(align(16)) BYTE main[0x60]; __declspec(align(16)) BYTE thisScope[0x60]; };
+
+    static ScanFn g_originalScan = 0;
+    static ScopeCtorFn g_scopeCtor = 0;
+    static std::vector<TypeInfo> g_types;
+    static std::vector<AttackerState> g_attackers;
+
+    static DWORD R(DWORD at) { return *(DWORD*)(DWORD_PTR)at; }
+    static BYTE R8(DWORD at) { return *(BYTE*)(DWORD_PTR)at; }
+    static int CurrentDay()
+    {
+        DWORD world = R(g_base + kWorldPtr);
+        return world ? (int)(R(world + 0xB0C) / 24) : -1;
+    }
+    static DWORD CountryCount()
+    {
+        DWORD manager = R(g_base + kCountryManager);
+        DWORD count = manager ? R(manager) : 0;
+        return count <= 10000 ? count : 0;
+    }
+    static DWORD TypeCount(DWORD* beginOut)
+    {
+        DWORD manager = R(g_base + kCbManager);
+        if (!manager) return 0;
+        DWORD begin = R(manager + 0x0C), end = R(manager + 0x10);
+        if (!begin || end < begin || end - begin > 0x10000 || ((end - begin) & 3)) return 0;
+        *beginOut = begin;
+        return (end - begin) / 4;
+    }
+    static bool IsListedClass(DWORD vt)
+    {
+        for (DWORD i = 0; i < kAttackerClassCount; ++i)
+            if (vt == g_base + kAttackerClasses[i]) return true;
+        return false;
+    }
+    static bool IsAttackerOnly(DWORD trigger, int depth)
+    {
+        if (!trigger || depth > 64) return false;
+        DWORD vt = R(trigger);
+        if (vt == g_base + kAndVtable || vt == g_base + kOrVtable || vt == g_base + kNotVtable)
+        {
+            DWORD begin = R(trigger + 8), end = R(trigger + 12);
+            if (end < begin || end - begin > 0x10000 || ((end - begin) & 3)) return false;
+            for (DWORD at = begin; at < end; at += 4)
+                if (!IsAttackerOnly(R(at), depth + 1)) return false;
+            return true;
+        }
+        return IsListedClass(vt) && R8(trigger + 0x18) == 0 && R8(trigger + 0x19) == 0;
+    }
+    static bool Evaluate(DWORD trigger, void* scope)
+    {
+        DWORD fn = R(R(trigger) + 0x18);
+        return ((EvalFn)(DWORD_PTR)fn)((void*)(DWORD_PTR)trigger, 0, scope) != 0;
+    }
+    static bool IsRealType(DWORD type)
+    {
+        DWORD fn = R(R(type) + 0x1C);
+        return ((RealFn)(DWORD_PTR)fn)((void*)(DWORD_PTR)type, 0) != 0;
+    }
+    static bool CanUse(DWORD type, void* scope)
+    {
+        DWORD fn = R(R(type) + 0x20);
+        return ((EvalFn)(DWORD_PTR)fn)((void*)(DWORD_PTR)type, 0, scope) != 0;
+    }
+    static bool RefreshTypes()
+    {
+        DWORD begin = 0, count = TypeCount(&begin);
+        if (!count) return false;
+        bool same = g_types.size() == count;
+        for (DWORD i = 0; same && i < count; ++i)
+            same = g_types[i].type == R(begin + i * 4);
+        if (same) return true;
+        std::vector<TypeInfo> fresh(count);
+        for (DWORD i = 0; i < count; ++i)
+        {
+            TypeInfo& info = fresh[i];
+            info.type = R(begin + i * 4);
+            info.real = IsRealType(info.type);
+            info.always = R8(info.type + 0x132) != 0;
+            DWORD block = info.type + 0x4C;
+            DWORD first = R(block + 8), last = R(block + 12);
+            if (last < first || last - first > 0x10000 || ((last - first) & 3)) return false;
+            for (DWORD at = first; at < last; at += 4)
+            {
+                DWORD child = R(at);
+                if (IsAttackerOnly(child, 0)) info.attackerOnly.push_back(child);
+            }
+        }
+        g_types.swap(fresh);
+        for (size_t i = 0; i < g_attackers.size(); ++i) g_attackers[i].day = -1;
+        return true;
+    }
+    static AttackerState* StateFor(void* attackerRef, int day)
+    {
+        DWORD index = R((DWORD)(DWORD_PTR)attackerRef + 4);
+        DWORD countries = CountryCount();
+        if (index >= countries) return 0;
+        if (g_attackers.size() != countries) g_attackers.resize(countries);
+        AttackerState& state = g_attackers[index];
+        if (state.day == day) return &state;
+        BYTE scope[0x60] = {};
+        g_scopeCtor(scope, 0, 0);
+        memcpy(scope + 8, attackerRef, 8);
+        state.dead.assign(g_types.size(), 0);
+        state.liveAlways.clear();
+        for (DWORD i = 0; i < g_types.size(); ++i)
+        {
+            const TypeInfo& info = g_types[i];
+            if (!info.real) { state.dead[i] = 1; continue; }
+            for (size_t n = 0; n < info.attackerOnly.size(); ++n)
+                if (!Evaluate(info.attackerOnly[n], scope)) { state.dead[i] = 1; break; }
+            if (!state.dead[i] && info.always) state.liveAlways.push_back(i);
+        }
+        state.day = day;
+        return &state;
+    }
+    static void BuildScopes(ScopePair& scopes, void* attackerRef, void* defenderRef)
+    {
+        memset(&scopes, 0, sizeof(scopes));
+        g_scopeCtor(scopes.main, 0, 0);
+        g_scopeCtor(scopes.thisScope, 0, 0);
+        memcpy(scopes.main + 8, attackerRef, 8);
+        memcpy(scopes.thisScope + 8, defenderRef, 8);
+        *(DWORD*)(scopes.main + 0x24) = (DWORD)(DWORD_PTR)scopes.thisScope;
+    }
+    static char __stdcall ScanHook(void* relation, void* defenderRef, void* attackerRef)
+    {
+        int day = CurrentDay();
+        if (day < 0 || !RefreshTypes())
+            return g_originalScan(relation, defenderRef, attackerRef);
+        AttackerState* state = StateFor(attackerRef, day);
+        if (!state) return g_originalScan(relation, defenderRef, attackerRef);
+        ScopePair scopes;
+        BuildScopes(scopes, attackerRef, defenderRef);
+        for (size_t n = 0; n < state->liveAlways.size(); ++n)
+        {
+            DWORD i = state->liveAlways[n];
+            if (CanUse(g_types[i].type, scopes.main)) return 1;
+        }
+        if (relation)
+        {
+            DWORD node = R((DWORD)(DWORD_PTR)relation + 0x50);
+            while (node)
+            {
+                DWORD cb = R(node), next = R(node + 8);
+                if (cb)
+                {
+                    DWORD i = R(cb + 0x24);
+                    if (i < g_types.size() && !g_types[i].always && !state->dead[i] &&
+                        CanUse(g_types[i].type, scopes.main)) return 1;
+                }
+                node = next;
+            }
+        }
+        return 0;
+    }
+    static bool CallMatches(DWORD site)
+    {
+        unsigned char expected[5] = { 0xE8, 0, 0, 0, 0 };
+        DWORD rel = (g_base + kScanFn) - (g_base + site + 5);
+        memcpy(expected + 1, &rel, 4);
+        return memcmp((void*)(g_base + site), expected, 5) == 0;
+    }
+    static bool Install()
+    {
+        if (memcmp((void*)(g_base + kScanFn), "\x55\x8B\xEC\x83\xE4\xF8", 6) != 0 ||
+            memcmp((void*)(g_base + kScopeCtor), "\x55\x8B\xEC", 3) != 0 ||
+            !CallMatches(kCallSites[0]) || !CallMatches(kCallSites[1]))
+        {
+            Log("CbCull: executable signatures differ; left disabled");
+            return false;
+        }
+        g_originalScan = (ScanFn)(DWORD_PTR)(g_base + kScanFn);
+        g_scopeCtor = (ScopeCtorFn)(DWORD_PTR)(g_base + kScopeCtor);
+        if (!PatchE8(kCallSites[0], (const unsigned char*)(g_base + kCallSites[0]), (void*)&ScanHook, "CbCull war scan")) return false;
+        if (!PatchE8(kCallSites[1], (const unsigned char*)(g_base + kCallSites[1]), (void*)&ScanHook, "CbCull diplomacy scan")) return false;
+        Log("CbCull: installed on the AI war and diplomacy target scans");
+        return true;
+    }
+}
+
+
+
+// FAST_AI_QUEUE implementation
+// PATCH_FAST_AI_QUEUE: at max speed, keep draining AI jobs in this frame
+// until the queue is empty or the per-frame time limit is reached.
+namespace FastAiQueue
+{
+    static const DWORD kCallSite = 0x2557C4;
+    static const DWORD kAiFrameUpdate = 0x2874C0;
+    static const DWORD kWorldSlot = 0xE588E8;
+    static const DWORD kWorldSpeed = 0xB28;
+    static const DWORD kMaxSpeed = 4;
+    static const LONGLONG kMaxFrameMs = 250;
+    typedef void (__stdcall *AiFrameUpdateFn)(void*);
+    static AiFrameUpdateFn g_aiFrameUpdate;
+    static DWORD g_worldSlot;
+    static LONGLONG g_maxFrameTicks;
+
+    static LONGLONG Qpc()
+    {
+        LARGE_INTEGER t;
+        QueryPerformanceCounter(&t);
+        return t.QuadPart;
+    }
+    static int PendingJobs(void* queueRef)
+    {
+        if (!queueRef) return 0;
+        DWORD buckets = *(DWORD*)queueRef;
+        return buckets ? *(int*)(DWORD_PTR)(buckets + 8) : 0;
+    }
+    static void __stdcall Run(void* queueRef)
+    {
+        LONGLONG start = Qpc();
+        DWORD world = *(DWORD*)(DWORD_PTR)g_worldSlot;
+        bool maxSpeed = world && *(int*)(DWORD_PTR)(world + kWorldSpeed) == (int)kMaxSpeed;
+        if (maxSpeed) DecisionCull::FrameBegin(queueRef);
+        g_aiFrameUpdate(queueRef);
+        while (maxSpeed && PendingJobs(queueRef) > 0 && Qpc() - start < g_maxFrameTicks)
+            g_aiFrameUpdate(queueRef);
+        if (maxSpeed) DecisionCull::FrameEnd();
+    }
+    __declspec(naked) static void Thunk()
+    {
+        __asm {
+            pushad
+            pushfd
+            mov ebx, esp
+            sub esp, 512
+            and esp, 0FFFFFFF0h
+            fxsave [esp]
+            push dword ptr [ebx + 40]
+            call Run
+            fxrstor [esp]
+            mov esp, ebx
+            popfd
+            popad
+            ret 4
+        }
+    }
+    static bool Install()
+    {
+        unsigned char expected[5] = { 0xE8, 0, 0, 0, 0 };
+        DWORD rel = (g_base + kAiFrameUpdate) - (g_base + kCallSite + 5);
+        memcpy(expected + 1, &rel, 4);
+        if (memcmp((void*)(g_base + kCallSite), expected, sizeof(expected)) != 0)
+        {
+            Log("FastAiQueue: call-site signature differs; left disabled");
+            return false;
+        }
+        LARGE_INTEGER freq;
+        if (!QueryPerformanceFrequency(&freq) || freq.QuadPart <= 0) return false;
+        g_worldSlot = g_base + kWorldSlot;
+        g_aiFrameUpdate = (AiFrameUpdateFn)(DWORD_PTR)(g_base + kAiFrameUpdate);
+        g_maxFrameTicks = freq.QuadPart * kMaxFrameMs / 1000;
+        if (!PatchE8(kCallSite, expected, (void*)&Thunk, "FastAiQueue"))
+            return false;
+        g_fastAiQueueInstalled = true;
+        Log("FastAiQueue: active at max speed, queue-drain limit %lld ms per frame", kMaxFrameMs);
+        return true;
+    }
+}
+
+// PATCH_PARALLEL_EVENTS: evaluate the daily event trigger scan in batches on
+// the existing worker pool. Event effects, MTTH and random draws stay serial.
+namespace ParallelEvents
+{
+    static const DWORD kScanCall=0x2861E8, kScan=0x4A7CD0, kFireCall[2]={0x4A7EF4,0x4A80D5}, kFire=0x4A8120;
+    static const DWORD kAndVtable=0x9F9994, kWorldSlot=0xE588E8, kCountryManagerSlot=0xE587E4, kProvinceSourceSlot=0xE5870C;
+    static const DWORD kDateOffset=0xB0C, kDateBase=0x029C55C0, kWorldProvinces=0xACC;
+    static const DWORD kCountryTag=0x1C, kCountryIndex=0x20, kCountryEvents=0x08, kCountryProvincesBegin=0x9D8, kCountryProvincesEnd=0x9DC;
+    static const DWORD kProvinceOwner=0x12C, kProvinceEvents=0x14, kEventTrigger=0x30;
+    static const DWORD kScopeTag=0x08, kScopeCountry=0x0C, kScopeProvince=0x10;
+    static const size_t kScopeSize=0x48, kVtableSlots=16, kChunkSize=1024;
+    static const int kPerTask=16, kReportEvery=30, kMaxMismatchLogs=20;
+    typedef char (__fastcall *EvaluateFn)(void*,void*,void*);
+    typedef int (__fastcall *CountFn)(void*,void*);
+    struct Entry { DWORD trigger,key,tag; BYTE result; };
+    static int g_mode=0;
+    static EvaluateFn g_originalEvaluate=0;
+    static DWORD g_fakeVtable[kVtableSlots], g_andVtable=0, g_scan=0, g_fire=0;
+    static std::vector<Entry> g_sequence;
+    static size_t g_next=0,g_readyEnd=0,g_chunkBegin=0,g_chunkEnd=0;
+    static bool g_inScan=false,g_countryPass=false;
+    static volatile LONG g_fired=0,g_fireDepth=0;
+    static __declspec(align(16)) BYTE g_scopeTemplate[kScopeSize];
+    static DWORD g_templateOrigin=0;
+    static unsigned long long g_scans=0,g_entries=0,g_chunks=0,g_served=0,g_passthrough=0,g_fires=0,g_compared=0,g_mismatches=0,g_batchTicks=0;
+    static int g_mismatchLogs=0;
+    static LONGLONG g_qpcFrequency=0;
+
+    static DWORD R(DWORD p) { return *(DWORD*)(DWORD_PTR)p; }
+    static LONGLONG Qpc() { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.QuadPart; }
+    static char EvalOriginal(DWORD trigger,void* scope) { return g_originalEvaluate((void*)(DWORD_PTR)trigger,0,scope); }
+    static bool CallMatches(DWORD site,DWORD target)
+    {
+        unsigned char expected[5]={0xE8}; DWORD rel=target-(site+5); memcpy(expected+1,&rel,4);
+        return memcmp((void*)(g_base+site),expected,5)==0;
+    }
+    static void FillScope(BYTE* scope,const Entry& e)
+    {
+        memcpy(scope,g_scopeTemplate,kScopeSize);
+        DWORD copy=(DWORD)(DWORD_PTR)scope;
+        // CEventScope stores a pointer to itself at +0x24; relocate all self-pointers.
+        for(size_t off=0;off<kScopeSize;off+=4) {
+            DWORD value; memcpy(&value,scope+off,4);
+            if(value>=g_templateOrigin && value<g_templateOrigin+kScopeSize) {
+                value=value-g_templateOrigin+copy; memcpy(scope+off,&value,4);
+            }
+        }
+        if(g_countryPass) { memcpy(scope+kScopeTag,&e.tag,4); memcpy(scope+kScopeCountry,&e.key,4); }
+        else memcpy(scope+kScopeProvince,&e.key,4);
+    }
+    static void EvaluateTask(int index,void*)
+    {
+        size_t begin=g_chunkBegin+(size_t)index*kPerTask, end=begin+kPerTask<g_chunkEnd?begin+kPerTask:g_chunkEnd;
+        __declspec(align(16)) BYTE scope[kScopeSize+16];
+        for(size_t i=begin;i<end;++i) { Entry& e=g_sequence[i]; FillScope(scope,e); e.result=EvalOriginal(e.trigger,scope)?1:0; }
+    }
+    static void ComputeChunk(void* liveScope)
+    {
+        LONGLONG start=Qpc(); memcpy(g_scopeTemplate,liveScope,kScopeSize); g_templateOrigin=(DWORD)(DWORD_PTR)liveScope;
+        g_chunkBegin=g_next; g_chunkEnd=g_next+kChunkSize<g_sequence.size()?g_next+kChunkSize:g_sequence.size();
+        int tasks=(int)((g_chunkEnd-g_chunkBegin+kPerTask-1)/kPerTask);
+        DecisionWorkers::Run(tasks,&EvaluateTask,0); g_readyEnd=g_chunkEnd; ++g_chunks; g_batchTicks+=(unsigned long long)(Qpc()-start);
+    }
+    static char __fastcall EvaluateHook(void* self,void*,void* scope)
+    {
+        if(!g_inScan || g_fireDepth>0) return g_originalEvaluate(self,0,scope);
+        DWORD trigger=(DWORD)(DWORD_PTR)self, key=R((DWORD)(DWORD_PTR)scope+(g_countryPass?kScopeCountry:kScopeProvince));
+        if(g_next>=g_sequence.size() || g_sequence[g_next].trigger!=trigger || g_sequence[g_next].key!=key) {
+            ++g_passthrough; return g_originalEvaluate(self,0,scope);
+        }
+        if(InterlockedCompareExchange(&g_fired,0,0)) { InterlockedExchange(&g_fired,0); g_readyEnd=g_next; }
+        if(g_next>=g_readyEnd) ComputeChunk(scope);
+        char result=(char)g_sequence[g_next].result; ++g_next;
+        if(g_mode==2) {
+            char serial=g_originalEvaluate(self,0,scope)?1:0; ++g_compared;
+            if(serial!=result) { ++g_mismatches; if(g_mismatchLogs++<kMaxMismatchLogs)
+                Log("ParallelEvents: mismatch %s pass entity=%u trigger=%08X serial=%d parallel=%d",g_countryPass?"country":"province",key,trigger,serial,result); }
+            return serial;
+        }
+        ++g_served; return result;
+    }
+    static void AddEntry(DWORD event,DWORD key,DWORD tag)
+    {
+        DWORD block=event+kEventTrigger, vt=R(block);
+        if(vt==g_andVtable) *(DWORD*)(DWORD_PTR)block=(DWORD)(DWORD_PTR)g_fakeVtable;
+        else if(vt!=(DWORD)(DWORD_PTR)g_fakeVtable) return;
+        Entry e={block,key,tag,0}; g_sequence.push_back(e);
+    }
+    static void __cdecl ScanBegin()
+    {
+        g_inScan=false; g_sequence.clear(); g_next=g_readyEnd=0; InterlockedExchange(&g_fired,0);
+        DWORD world=R(g_base+kWorldSlot), manager=R(g_base+kCountryManagerSlot);
+        if(!world||!manager) { g_inScan=false; return; }
+        int days=((int)R(world+kDateOffset)-(int)kDateBase)/24; g_countryPass=(days%2)==1;
+        DWORD countries=R(manager+4), count=R(manager); if(!countries||count>10000) { g_inScan=false; return; }
+        if(g_countryPass) {
+            for(DWORD i=1;i<count;++i) {
+                DWORD c=R(countries+i*4), index=c?R(c+kCountryIndex):0; if(!index||index>=count) continue;
+                DWORD owner=R(countries+index*4); if(!owner) continue;
+                if((int)((R(owner+kCountryProvincesEnd)-R(owner+kCountryProvincesBegin))&0xFFFFFFFC)<=0) continue;
+                DWORD begin=R(owner+kCountryEvents),end=R(owner+kCountryEvents+4);
+                if(end<begin||end-begin>0x100000||((end-begin)&3)) continue;
+                for(DWORD at=begin;at<end;at+=4) AddEntry(R(at),index,R(c+kCountryTag));
+            }
+        } else {
+            DWORD source=R(g_base+kProvinceSourceSlot); if(!source) { g_inScan=false; return; }
+            CountFn countFn=(CountFn)(DWORD_PTR)R(R(source)+0x24); int n=countFn((void*)(DWORD_PTR)source,0);
+            DWORD provinces=R(world+kWorldProvinces); if(n<0||n>1000000||!provinces) { g_inScan=false; return; }
+            for(int p=0;p<n;++p) {
+                DWORD province=R(provinces+p*4); if(!province||!R(province+kProvinceOwner)) continue;
+                DWORD begin=R(province+kProvinceEvents),end=R(province+kProvinceEvents+4);
+                if(end<begin||end-begin>0x100000||((end-begin)&3)) continue;
+                for(DWORD at=begin;at<end;at+=4) AddEntry(R(at),(DWORD)p,0);
+            }
+        }
+        g_entries+=g_sequence.size(); g_inScan=true;
+    }
+    static void __cdecl ScanEnd()
+    {
+        g_inScan=false; if(++g_scans%kReportEvery) return;
+        double ms=g_qpcFrequency?1000.0*(double)g_batchTicks/(double)g_qpcFrequency/kReportEvery:0.0;
+        Log("ParallelEvents: last %d scans avg %llu entries, %llu served, %llu passthrough, %llu chunks, %llu fires, batches %.2f ms/day",
+            kReportEvery,g_entries/kReportEvery,g_served/kReportEvery,g_passthrough/kReportEvery,g_chunks,g_fires,ms);
+        if(g_mode==2) Log("ParallelEvents: shadow %llu compared, %llu mismatches",g_compared,g_mismatches);
+        g_entries=g_served=g_passthrough=g_chunks=g_fires=g_compared=g_mismatches=g_batchTicks=0;
+    }
+    static void __cdecl FireDone() { g_readyEnd=g_next; InterlockedExchange(&g_fired,1); ++g_fires; }
+    __declspec(naked) static void ScanThunk()
+    {
+        __asm {
+            pushad
+            pushfd
+            call ScanBegin
+            popfd
+            popad
+            push dword ptr [esp + 4]
+            call dword ptr [g_scan]
+            pushad
+            pushfd
+            call ScanEnd
+            popfd
+            popad
+            ret 4
+        }
+    }
+    __declspec(naked) static void FireThunk()
+    {
+        __asm {
+            inc dword ptr [g_fireDepth]
+            push dword ptr [esp + 8]
+            push dword ptr [esp + 8]
+            call dword ptr [g_fire]
+            dec dword ptr [g_fireDepth]
+            pushad
+            pushfd
+            call FireDone
+            popfd
+            popad
+            ret 8
+        }
+    }
+    static bool Install()
+    {
+        g_mode=g_settings.patchParallelEvents;
+        if(g_mode!=1&&g_mode!=2) { Log("ParallelEvents: disabled"); return false; }
+        g_andVtable=g_base+kAndVtable; g_scan=g_base+kScan; g_fire=g_base+kFire;
+        DWORD eval=R(g_andVtable+0x18);
+        if(!eval||!CallMatches(kScanCall,kScan)||!CallMatches(kFireCall[0],kFire)||!CallMatches(kFireCall[1],kFire)||
+            memcmp((void*)(DWORD_PTR)eval,"\x55\x8B\xEC",3)!=0) { Log("ParallelEvents: executable signatures differ; left disabled"); return false; }
+        LARGE_INTEGER freq; if(!QueryPerformanceFrequency(&freq)||freq.QuadPart<=0) return false; g_qpcFrequency=freq.QuadPart;
+        memcpy(g_fakeVtable,(void*)(DWORD_PTR)g_andVtable,sizeof(g_fakeVtable));
+        g_originalEvaluate=(EvaluateFn)(DWORD_PTR)g_fakeVtable[0x18/4];
+        g_fakeVtable[0x18/4]=(DWORD)(DWORD_PTR)&EvaluateHook; g_sequence.reserve(1<<16);
+        if(!PatchE8(kFireCall[0],(const unsigned char*)(g_base+kFireCall[0]),(void*)&FireThunk,"ParallelEvents fire country")) return false;
+        if(!PatchE8(kFireCall[1],(const unsigned char*)(g_base+kFireCall[1]),(void*)&FireThunk,"ParallelEvents fire province")) return false;
+        if(!PatchE8(kScanCall,(const unsigned char*)(g_base+kScanCall),(void*)&ScanThunk,"ParallelEvents daily scan")) return false;
+        Log("ParallelEvents: active (%s); event firing and random draws remain serial",g_mode==2?"shadow compare":"worker results used");
+        return true;
+    }
+}
+
 
 static bool Install()
 {
@@ -21326,8 +22919,37 @@ static bool Install()
 
     InstallGoodsConsumption();
 
+    if (g_settings.assimilateBlock)
+        InstallAssimilateBlock();
+
     if (g_settings.goodsIcons)
         InstallGoodsIcons();
+
+    if (g_settings.patchCompressFlagCache)
+        InstallFlagCache();
+
+    if (g_settings.patchPopPrefetch)
+        PopPrefetch::Install();
+
+    // Parallel decision filtering consumes one prepared AI queue batch, so
+    // install its queue hook before DecisionCull validates the dependency.
+    if (g_settings.patchFastAiQueue)
+        FastAiQueue::Install();
+
+    if (g_settings.patchCullDecisionChecks)
+        DecisionCull::Install();
+
+    if (g_settings.patchParallelEvents)
+        ParallelEvents::Install();
+
+    if (g_settings.patchCullCbChecks)
+        CbCull::Install();
+
+    if (g_settings.patchPrefetchRelations)
+        RelationPrefetch::Install();
+
+    if (g_settings.patchPrefetchAiRelations)
+        RelationPrefetch::InstallAi();
 
     if (g_settings.patchCombatRoll)
         InstallCombatRoll();
@@ -21356,6 +22978,15 @@ static bool Install()
     Log("IdleSkipNested: PATCH_SKIP_NESTED_IDLE=%d FIX_ARMY_WINDOW_LAG=%d PATCH_SKIP_CHK_WIN=%d PATCH_CAM_STILL=%d",
         (int)g_settings.patchSkipNestedIdle, (int)g_settings.patchFixArmyWindowLag,
         (int)g_settings.patchSkipChkWin, (int)g_settings.patchCamStill);
+
+    // Optional plugin "mod\<Name>\v2dll_mod.dll" of the running mod: last, so
+    // they see a fully patched game.
+    if (g_settings.enableMods)
+    {
+        char modDir[MAX_PATH];
+        if (ResolveModFolder(modDir, sizeof(modDir)))
+            LoadV2Mods(modDir);
+    }
 
     Log("Install: done");
     return true;

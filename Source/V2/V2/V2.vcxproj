@@ -20,10 +20,14 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="lua51_exports.h" />
+    <ClInclude Include="V2DLL_Shared.h" />
+    <ClInclude Include="V2ModAPI.h" />
     <ClInclude Include="minhook\include\MinHook.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="V2TechButton.cpp" />
+    <ClCompile Include="V2DLL_AssimilateBlock.cpp" />
+    <ClCompile Include="V2DLL_ModLoader.cpp" />
     <ClCompile Include="minhook\src\buffer.c" />
     <ClCompile Include="minhook\src\HDE\hde32.c" />
     <ClCompile Include="minhook\src\hook.c" />
@@ -31,6 +35,9 @@
   </ItemGroup>
   <Target Name="BuildEventMusic" AfterTargets="Build" Condition="'$(Platform)'=='Win32'">
     <MSBuild Projects="$(ProjectDir)EventMusic.vcxproj" Properties="Configuration=$(Configuration);Platform=Win32;OutDir=$(OutDir)" />
+  </Target>
+  <Target Name="BuildV2Mod" AfterTargets="Build" Condition="'$(Platform)'=='Win32'">
+    <MSBuild Projects="$(ProjectDir)V2Mod.vcxproj" Properties="Configuration=$(Configuration);Platform=Win32;OutDir=$(OutDir)" />
   </Target>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>18.0</VCProjectVersion>
