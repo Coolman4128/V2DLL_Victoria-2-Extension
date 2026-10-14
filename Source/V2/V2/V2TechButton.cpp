@@ -39,7 +39,7 @@
 // "у кого-то старая DLL" — сравнить эту строку в логах перед сетевой
 // игрой.
 // CLAUDE МЕНЯЙ ВЕРСИЮ ПРИ КАЖДОЙ ПРАВКЕ ФАЙЛА
-#define MOD_VERSION "5.71"
+#define MOD_VERSION "5.72"
 
 // Настройки ниже читаются из v2dll_settings.ini рядом с exe при
 // каждом запуске игры. Если файла ещё нет, он создаётся со
@@ -165,6 +165,16 @@ struct Settings
     bool assimilateBlock             = true;
     // Load the running mod's v2dll_mod.dll if it has one (see V2ModAPI.h).
     bool enableMods                  = true;
+    // Performance + multiplayer sync (V2DLL_MpSync.cpp). The multiplayer ones
+    // (STATE_CHECKSUM, FIX_RNG_RESYNC, SYNC_WORLD_RNG, MP_HOST_WAIT_DAYS,
+    // PIN_FPU_EVERY_TICK) must have the same value for every player.
+    bool skipNetworkWait             = true;
+    bool skipCleanResets             = true;
+    bool stateChecksum               = true;
+    bool fixRngResync                = true;
+    bool syncWorldRng                = true;
+    int  mpHostWaitDays              = 2;
+    bool pinFpuEveryTick             = true;
 
     // Взаимоисключающе с priceDelta (ENABLE_PRICE_DELTA) - оба
     // патчат один и тот же адрес. Если включены оба, побеждает этот.
@@ -4522,6 +4532,21 @@ static void ApplySetting(const char* key, const char* value)
     if (_stricmp(key, "GOODS_CONSUMPTION_MARKET_DEMAND") == 0)  { g_settings.goodsConsumptionDemand      = v; return; }
     if (_stricmp(key, "ENABLE_ASSIMILATE_BLOCK") == 0)          { g_settings.assimilateBlock             = v; return; }
     if (_stricmp(key, "ENABLE_MODS") == 0)                      { g_settings.enableMods                  = v; return; }
+    if (_stricmp(key, "SKIP_NETWORK_WAIT") == 0)                { g_settings.skipNetworkWait             = v; return; }
+    if (_stricmp(key, "SKIP_CLEAN_RESETS") == 0)                { g_settings.skipCleanResets             = v; return; }
+    if (_stricmp(key, "STATE_CHECKSUM") == 0)                   { g_settings.stateChecksum               = v; return; }
+    if (_stricmp(key, "FIX_RNG_RESYNC") == 0)                   { g_settings.fixRngResync                = v; return; }
+    if (_stricmp(key, "SYNC_WORLD_RNG") == 0)                   { g_settings.syncWorldRng                = v; return; }
+    if (_stricmp(key, "PIN_FPU_EVERY_TICK") == 0)               { g_settings.pinFpuEveryTick             = v; return; }
+    if (_stricmp(key, "MP_HOST_WAIT_DAYS") == 0)
+    {
+        g_settings.mpHostWaitDays = atoi(value);
+        if (g_settings.mpHostWaitDays < 0)
+            g_settings.mpHostWaitDays = 0;
+        if (g_settings.mpHostWaitDays > 30)
+            g_settings.mpHostWaitDays = 30;
+        return;
+    }
 
     if (_stricmp(key, "COMBAT_ROLL_MIN") == 0) { g_settings.combatRollMin = atoi(value); return; }
     if (_stricmp(key, "COMBAT_ROLL_MAX") == 0) { g_settings.combatRollMax = atoi(value); return; }
@@ -4730,6 +4755,13 @@ static void WriteDefaultSettings(const char* path)
         "GOODS_CONSUMPTION_MARKET_DEMAND=%d\n"
         "ENABLE_ASSIMILATE_BLOCK=%d\n"
         "ENABLE_MODS=%d\n"
+        "SKIP_NETWORK_WAIT=%d\n"
+        "SKIP_CLEAN_RESETS=%d\n"
+        "STATE_CHECKSUM=%d\n"
+        "FIX_RNG_RESYNC=%d\n"
+        "SYNC_WORLD_RNG=%d\n"
+        "MP_HOST_WAIT_DAYS=%d\n"
+        "PIN_FPU_EVERY_TICK=%d\n"
         "PATCH_BUDGET_TOTAL_INCOME_TARIFFS=%d\n"
         "\n",
         (int)FindExePatchEnabled("consciousness_plurality_growth"),
@@ -4750,6 +4782,13 @@ static void WriteDefaultSettings(const char* path)
         (int)g_settings.goodsConsumptionDemand,
         (int)g_settings.assimilateBlock,
         (int)g_settings.enableMods,
+        (int)g_settings.skipNetworkWait,
+        (int)g_settings.skipCleanResets,
+        (int)g_settings.stateChecksum,
+        (int)g_settings.fixRngResync,
+        (int)g_settings.syncWorldRng,
+        g_settings.mpHostWaitDays,
+        (int)g_settings.pinFpuEveryTick,
         (int)FindExePatchEnabled("budget_total_income_tariffs_1"));
 
     fprintf(f,
@@ -22921,6 +22960,19 @@ static bool Install()
 
     if (g_settings.assimilateBlock)
         InstallAssimilateBlock();
+
+    {
+        MpSyncConfig mp;
+        mp.skipNetworkWait = g_settings.skipNetworkWait;
+        mp.skipCleanResets = g_settings.skipCleanResets;
+        mp.stateChecksum   = g_settings.stateChecksum;
+        mp.oosLog          = g_settings.enableOosLog;
+        mp.fixRngResync    = g_settings.fixRngResync;
+        mp.syncWorldRng    = g_settings.syncWorldRng;
+        mp.hostWaitDays    = g_settings.mpHostWaitDays;
+        mp.pinFpuFn        = g_settings.pinFpuEveryTick ? &PinFpu : NULL;
+        InstallMpSync(mp);
+    }
 
     if (g_settings.goodsIcons)
         InstallGoodsIcons();
