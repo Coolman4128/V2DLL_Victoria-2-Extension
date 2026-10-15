@@ -28,7 +28,6 @@
     <ClCompile Include="V2TechButton.cpp" />
     <ClCompile Include="V2DLL_AssimilateBlock.cpp" />
     <ClCompile Include="V2DLL_ModLoader.cpp" />
-    <ClCompile Include="V2DLL_MpSync.cpp" />
     <ClCompile Include="minhook\src\buffer.c" />
     <ClCompile Include="minhook\src\HDE\hde32.c" />
     <ClCompile Include="minhook\src\hook.c" />
