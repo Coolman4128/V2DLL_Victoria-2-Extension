@@ -1,0 +1,14 @@
+00dcd600  [CO_E_NOSYNCHRONIZATION]
+      ref 00a96281 DATA in ?
+00dce57c  [WBEM_E_SYNCHRONIZATION_REQUIRED]
+      ref 00a95ab7 DATA in ?
+00dd5870  [Operation could not be carried out because there is no hardware support for vertical blank synchronized operations.]
+      ref 00aa5c7e DATA in FUN_00aa5068 @ 00aa5068
+00dd8240  [Cannot lock for synchronization because no clock has been defined.]
+      ref 00aa5285 DATA in FUN_00aa5068 @ 00aa5068
+00e25978  [istargetasynchronous]
+      ref 00c3a0b8 DATA in FUN_00c381c0 @ 00c381c0
+00e42374  [Sending targeted asynchronous command: ]
+      ref 00a630ad DATA in FUN_00a62ea0 @ 00a62ea0
+00e4258c  [ASYNCHRONOUSLY_CONNECTED]
+      ref 00a67591 DATA in FUN_00a674c8 @ 00a674c8

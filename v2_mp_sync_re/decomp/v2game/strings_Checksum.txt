@@ -1,0 +1,17 @@
+00dcb8dc  [MSSIPOTF_E_FILE_CHECKSUM]
+      (no refs)
+00dcb8f8  [MSSIPOTF_E_TABLE_CHECKSUM]
+      (no refs)
+00e07cfc  [Creating checksum for all files took ]
+      ref 00638953 DATA in FUN_006377a0 @ 006377a0
+00e07d2c  [Checksum is ]
+      ref 00638a4e DATA in FUN_006377a0 @ 006377a0
+00e0aa1c  [Checksum: ]
+      ref 00683214 DATA in FUN_00682ec0 @ 00682ec0
+      ref 00683351 DATA in FUN_00682ec0 @ 00682ec0
+00e14a18  [checksum]
+      ref 0077905e DATA in FUN_00778d40 @ 00778d40
+      ref 0076b503 DATA in FUN_0076b4b0 @ 0076b4b0
+      ref 00c3c604 DATA in FUN_00c381c0 @ 00c381c0
+00e24f10  [affects_checksum]
+      ref 00c3c630 DATA in FUN_00c381c0 @ 00c381c0

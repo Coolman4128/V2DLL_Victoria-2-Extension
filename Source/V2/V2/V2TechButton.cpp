@@ -15,6 +15,7 @@
 #endif
 
 #include <windows.h>
+#include <tlhelp32.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
@@ -39,7 +40,7 @@
 // "у кого-то старая DLL" — сравнить эту строку в логах перед сетевой
 // игрой.
 // CLAUDE МЕНЯЙ ВЕРСИЮ ПРИ КАЖДОЙ ПРАВКЕ ФАЙЛА
-#define MOD_VERSION "5.73"
+#define MOD_VERSION "5.76"
 
 // Настройки ниже читаются из v2dll_settings.ini рядом с exe при
 // каждом запуске игры. Если файла ещё нет, он создаётся со
@@ -207,6 +208,41 @@ struct Settings
     // (диалог OOS_TITLE / "Games out of synch"). Не каждый тик.
     bool enableOosLog = true;
 
+    // Logs\v2dll_rng.log: на каждый игровой день - сколько раз и ИЗ КАКИХ мест
+    // exe вызывали Random() (слот 0 контрольной суммы MP = счётчик этих
+    // вызовов). Только наблюдение, состояние игры не меняет. По двум таким
+    // логам (хост и клиент) видно, какое место вызвало лишний Random().
+    bool enableRngProbe = true;
+
+    // Logs\v2dll_state.log: на каждый игровой день хэши состояния симуляции
+    // (казна стран, сбережения штатов, фабрики, деньги попов по провинциям,
+    // цены рынка). Только чтение. Нужен, чтобы найти ПЕРВЫЙ день и место,
+    // где состояние хоста и клиентов разошлось (счётчик Random() видит это
+    // с запозданием).
+    bool enableStateProbe = true;
+    // SP_WINDOW_FROM / SP_WINDOW_TO: окно игровых дат (ГГГГ.М.Д), внутри которого
+    // сырые дампы состояния (D-строки в v2dll_state.log, включая сырые попы)
+    // пишутся КАЖДЫЙ день, независимо от 45-дневного счётчика от начала сессии.
+    // Для охоты за рассинхроном на известном сейве: окно = месяц вокруг
+    // ожидаемого расхождения, одинаково на всех машинах. Пусто = прежнее
+    // поведение. Ключи косметические (не входят в ConfigFingerprint).
+    char spWindowFrom[16] = "";
+    char spWindowTo[16] = "";
+    // MONEY_WATCH_TAGS: страны для money watch (DR-точки на записи казны +0xE78),
+    // 3-буквенные теги через запятую/пробел, до 4 (DR0..DR3). Пусто = "KUK".
+    // Читается один раз на входе первого дневного тика.
+    char mwTags[64] = "";
+    // PATCH_STATE_SAVINGS_CAP / STATE_SAVINGS_CAP_POUNDS (5.76): лечение
+    // рассинхрона "казна vs сбережения штата". Сбережения штата (+0x228) в
+    // MP-сейве обрезаются по int32 (65536.00 = 0x80000000), излишек попадает
+    // в казну только на части машин - состояния расходятся с первого дня
+    // (кейс KUK #115). На входе дневного тика превышение капа одинаково
+    // переносится в казну на всех машинах (математика int64), раскладка
+    // денег становится идентичной. Влияет на симуляцию: все игроки обязаны
+    // иметь одинаковые значения (ключ входит в ConfigFingerprint).
+    bool patchStateSavingsCap = true;
+    int stateSavingsCapPounds = 60000;
+
     // Logs\v2dll_crash.log + Logs\v2dll_crash_*.dmp при необработанном
     // исключении / abort. Не каждый тик. Каждый дамп — отдельный файл.
     bool enableCrashLog = true;
@@ -288,6 +324,10 @@ static HMODULE g_selfModule = 0;
 static wchar_t g_logsDir[MAX_PATH];
 static wchar_t g_logFile[MAX_PATH];
 static wchar_t g_oosLogFile[MAX_PATH];
+static wchar_t g_rngLogFile[MAX_PATH];
+static wchar_t g_stateLogFile[MAX_PATH];
+static bool g_stateLogStarted = false;
+static bool g_rngLogStarted = false;
 static wchar_t g_crashLogFile[MAX_PATH];
 static wchar_t g_crashDumpFile[MAX_PATH];
 static bool g_logDirReady = false;
@@ -321,9 +361,91 @@ static void InitLogDir()
 
     swprintf_s(g_logFile, L"%s\\v2dll.log", g_logsDir);
     swprintf_s(g_oosLogFile, L"%s\\v2dll_oos.log", g_logsDir);
+    swprintf_s(g_rngLogFile, L"%s\\v2dll_rng.log", g_logsDir);
+    swprintf_s(g_stateLogFile, L"%s\\v2dll_state.log", g_logsDir);
     swprintf_s(g_crashLogFile, L"%s\\v2dll_crash.log", g_logsDir);
     swprintf_s(g_crashDumpFile, L"%s\\v2dll_crash.dmp", g_logsDir);
     g_logDirReady = true;
+}
+
+// Диагностические логи (oos / rng / state): каждая сессия пишет с нуля, а прошлый файл,
+// если в нём есть данные (не только заголовок), сохраняется как <имя>.<ггггммдд_ччммсс>.log
+// (время последней записи). Запуск игры только до лобби (в файле лишь заголовок, < 300
+// байт) прошлый лог не вытесняет - в 5.63 два таких запуска подряд стёрли лог хоста.
+// Хранится KEEP последних копий каждого вида, более старые удаляются.
+void Log(const char* fmt, ...);
+
+static void RotateLogOnce(const wchar_t* path)
+{
+    static const int KEEP = 6;
+    WIN32_FILE_ATTRIBUTE_DATA fad;
+    if (!GetFileAttributesExW(path, GetFileExInfoStandard, &fad))
+        return;
+    ULONGLONG size = ((ULONGLONG)fad.nFileSizeHigh << 32) | fad.nFileSizeLow;
+    if (size < 300)
+        return;
+
+    wchar_t base[MAX_PATH];
+    wcscpy_s(base, path);
+    wchar_t* dot = wcsrchr(base, L'.');
+    if (!dot)
+        return;
+    wchar_t ext[16];
+    wcscpy_s(ext, dot);
+    *dot = 0;
+
+    FILETIME lft;
+    SYSTEMTIME st;
+    if (!FileTimeToLocalFileTime(&fad.ftLastWriteTime, &lft) || !FileTimeToSystemTime(&lft, &st))
+        GetLocalTime(&st);
+    wchar_t dst[MAX_PATH];
+    swprintf_s(dst, L"%s.%04d%02d%02d_%02d%02d%02d%s", base, (int)st.wYear, (int)st.wMonth, (int)st.wDay,
+        (int)st.wHour, (int)st.wMinute, (int)st.wSecond, ext);
+    BOOL moved = MoveFileExW(path, dst, MOVEFILE_REPLACE_EXISTING);
+
+    char nameA[128] = { 0 };
+    const wchar_t* fn = wcsrchr(dst, L'\\');
+    WideCharToMultiByte(CP_ACP, 0, fn ? fn + 1 : dst, -1, nameA, (int)sizeof(nameA) - 1, 0, 0);
+    Log("LogRotate: прошлый лог (%llu байт) %s -> %s", (unsigned long long)size, moved ? "сохранён как" : "НЕ сохранён,",
+        nameA);
+
+    // оставить KEEP последних копий (имена с меткой времени сортируются по алфавиту)
+    wchar_t pat[MAX_PATH];
+    swprintf_s(pat, L"%s.20*%s", base, ext);
+    wchar_t dir[MAX_PATH];
+    wcscpy_s(dir, pat);
+    wchar_t* sl = wcsrchr(dir, L'\\');
+    if (!sl)
+        return;
+    *(sl + 1) = 0;
+    static wchar_t names[64][64];
+    int n = 0;
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW(pat, &fd);
+    if (h != INVALID_HANDLE_VALUE)
+    {
+        do
+        {
+            if (n < 64 && wcslen(fd.cFileName) < 64)
+                wcscpy_s(names[n++], fd.cFileName);
+        } while (FindNextFileW(h, &fd));
+        FindClose(h);
+    }
+    for (int i = 0; i < n; ++i)
+        for (int j = i + 1; j < n; ++j)
+            if (wcscmp(names[j], names[i]) < 0)
+            {
+                wchar_t tmp[64];
+                wcscpy_s(tmp, names[i]);
+                wcscpy_s(names[i], names[j]);
+                wcscpy_s(names[j], tmp);
+            }
+    for (int i = 0; i < n - KEEP; ++i)
+    {
+        wchar_t del[MAX_PATH];
+        swprintf_s(del, L"%s%s", dir, names[i]);
+        DeleteFileW(del);
+    }
 }
 
 void Log(const char* fmt, ...)
@@ -4449,6 +4571,13 @@ static void ApplySetting(const char* key, const char* value)
     if (_stricmp(key, "PATCH_SECOND_LINE_SPLASH") == 0)         { g_settings.patchSecondLineSplash       = v; return; }
     if (_stricmp(key, "PATCH_CHECKSUM_DIAGNOSTIC") == 0)        { g_settings.patchChecksumDiagnostic     = v; return; }
     if (_stricmp(key, "ENABLE_OOS_LOG") == 0)                   { g_settings.enableOosLog                = v; return; }
+    if (_stricmp(key, "ENABLE_RNG_PROBE") == 0)                 { g_settings.enableRngProbe              = v; return; }
+    if (_stricmp(key, "ENABLE_STATE_PROBE") == 0)               { g_settings.enableStateProbe            = v; return; }
+    if (_stricmp(key, "SP_WINDOW_FROM") == 0)                   { strncpy_s(g_settings.spWindowFrom, value, _TRUNCATE); return; }
+    if (_stricmp(key, "SP_WINDOW_TO") == 0)                     { strncpy_s(g_settings.spWindowTo, value, _TRUNCATE); return; }
+    if (_stricmp(key, "MONEY_WATCH_TAGS") == 0)                 { strncpy_s(g_settings.mwTags, value, _TRUNCATE); return; }
+    if (_stricmp(key, "PATCH_STATE_SAVINGS_CAP") == 0)          { g_settings.patchStateSavingsCap        = v; return; }
+    if (_stricmp(key, "STATE_SAVINGS_CAP_POUNDS") == 0)         { g_settings.stateSavingsCapPounds       = atoi(value); return; }
     if (_stricmp(key, "ENABLE_CRASH_LOG") == 0)                 { g_settings.enableCrashLog              = v; return; }
     if (_stricmp(key, "ENABLE_CRASH_DUMP") == 0)                { g_settings.enableCrashDump             = v; return; }
 
@@ -4827,17 +4956,31 @@ static void WriteDefaultSettings(const char* path)
         "PATCH_FACTORY_DUMP_SCAN=%d\n"
         "PATCH_CHECKSUM_DIAGNOSTIC=%d\n"
         "ENABLE_OOS_LOG=%d\n"
+        "ENABLE_RNG_PROBE=%d\n"
+        "ENABLE_STATE_PROBE=%d\n"
         "ENABLE_CRASH_LOG=%d\n"
         "ENABLE_CRASH_DUMP=%d\n"
-        "HIDE_NO_SUPPLY_DRY_RUN=%d\n",
+        "HIDE_NO_SUPPLY_DRY_RUN=%d\n"
+        "PATCH_STATE_SAVINGS_CAP=%d\n"
+        "STATE_SAVINGS_CAP_POUNDS=%d\n"
+        "SP_WINDOW_FROM=%s\n"
+        "SP_WINDOW_TO=%s\n"
+        "MONEY_WATCH_TAGS=%s\n",
         (int)g_settings.log,
         (int)g_settings.debugLog,
         (int)g_settings.patchFactoryDumpScan,
         (int)g_settings.patchChecksumDiagnostic,
         (int)g_settings.enableOosLog,
+        (int)g_settings.enableRngProbe,
+        (int)g_settings.enableStateProbe,
         (int)g_settings.enableCrashLog,
         (int)g_settings.enableCrashDump,
-        (int)g_settings.hideNoSupplyDryRun);
+        (int)g_settings.hideNoSupplyDryRun,
+        (int)g_settings.patchStateSavingsCap,
+        g_settings.stateSavingsCapPounds,
+        g_settings.spWindowFrom,
+        g_settings.spWindowTo,
+        g_settings.mwTags);
 
     fclose(f);
 }
@@ -11542,6 +11685,8 @@ static void LogOosFile(const char* fmt, ...)
     if (g_logCsInit)
         EnterCriticalSection(&g_logCs);
 
+    if (!g_oosLogStarted)
+        RotateLogOnce(g_oosLogFile);
     FILE* f = 0;
     if (_wfopen_s(&f, g_oosLogFile, g_oosLogStarted ? L"a" : L"w") != 0 || !f)
     {
@@ -12134,6 +12279,11 @@ static void __cdecl ReportOos(void* a0, void* a1)
 }
 
 static void __stdcall AccChkEnter(void* a0, void* a1);
+static void StateSavingsNormalize(void* session);
+static void RngProbeFlushDay(void* session);
+static void StateProbeFlushDay(void* session);
+static void EventRollFlushDay(void* session);
+static void TickProbeFlushDay(void* session);
 static void __stdcall AccChk(LONGLONG t0);
 static LONGLONG __stdcall DiagNow();
 
@@ -13046,6 +13196,11 @@ static void __stdcall AccPump(LONGLONG t0)
 
 static void __stdcall AccChkEnter(void* a0, void* a1)
 {
+    StateSavingsNormalize(a0);
+    RngProbeFlushDay(a0);
+    EventRollFlushDay(a0);
+    TickProbeFlushDay(a0);
+    StateProbeFlushDay(a0);
     if (g_settings.enableOosLog)
         ReportOos(a0, a1);
 }
@@ -14780,6 +14935,2167 @@ static bool PlantMidJump(DWORD rva, unsigned n, const unsigned char* expect, voi
     FlushInstructionCache(GetCurrentProcess(), src, n);
     LogDbg("%s: mid rva %06X n=%u", tag, rva, n);
     return true;
+}
+
+// ---------------------------------------------------------------
+// ENABLE_RNG_PROBE - диагностика рассинхронов: кто вызывает Random().
+//
+// Что такое "Checksum:0 sum" из v2dll_oos.log. Это глобальный счётчик
+// DAT_00F20C14 (RVA B20C14): каждая из четырёх обёрток генератора
+// FUN_009B7950 / FUN_009B7AC0 / FUN_009B7D30 / FUN_009B7D80
+// (RVA 5B7950 / 5B7AC0 / 5B7D30 / 5B7D80) делает inc этого счётчика и
+// зовёт ядро FUN_009B7610 (Mersenne twister, состояние VA F0ECF0). Каждый
+// день MP сравнивает этот счётчик между машинами. Значит "delta=2" - это
+// не "что-то в экономике", а ровно: за день на одной машине Random()
+// вызвали на 2 раза больше, чем на другой. Ядро зовут и напрямую (AI-
+// экономика и др.), мимо счётчика - такие вызовы в сумму не попадают.
+//
+// Что пишем. Хуки на вход четырёх обёрток (пролог копируется в трамплин,
+// регистры и флаги сохраняются, состояние игры не меняется). Для каждого
+// вызова берём адрес возврата (= место, откуда звали Random) и считаем
+// вызовы по (RVA вызывающего, вариант обёртки). На входе дневного тика
+// (FUN_00682EC0, тот же момент, что и строки SYNC в v2dll_oos.log) одна
+// строка за интервал уходит в Logs\v2dll_rng.log:
+//   date= ctr= n= h= thr= drop= | <RVA вызывающего hex>.<вариант 1-4>=<сколько> ...
+// date/ctr - как в SYNC (ctr - сам счётчик на входе тика); n - вызовов
+// обёрток с прошлой строки; h - хэш ПОРЯДКА вызывающих (отличается и при
+// равном n, если порядок вызовов разный); thr - сколько разных потоков
+// звали Random (>1 - гонка на счётчике/генераторе, он без lock); drop -
+// записей, не влезших в таблицу.
+// Как читать: взять v2dll_rng.log хоста и клиента, найти первую строку, где
+// отличаются n или h, и сравнить списки вызывающих: у кого число больше, там
+// и лишний вызов; RVA открывается в Ghidra как VA = RVA + 0x400000.
+// ---------------------------------------------------------------
+
+static const DWORD RVA_RNG_A       = 0x5B7950;   // FUN_009B7950: 55 8B EC 83 E4 F8
+static const DWORD RVA_RNG_B       = 0x5B7AC0;   // FUN_009B7AC0: 55 8B EC 83 E4 F8 (EDI - неявный выход)
+static const DWORD RVA_RNG_C       = 0x5B7D30;   // FUN_009B7D30: 83 3D <abs32 F20C18> 00
+static const DWORD RVA_RNG_D       = 0x5B7D80;   // FUN_009B7D80: 83 3D <abs32 F20C18> 00 (float 0..1)
+static const DWORD RVA_RNG_COUNTER = 0xB20C14;   // VA F20C14
+static const DWORD RVA_RNG_OBJPTR  = 0xB20C18;   // VA F20C18 - абсолютный адрес внутри cmp у C/D
+
+static const int RNG_SLOTS = 4096;
+struct RngSlot { volatile LONG key; volatile LONG cnt; };
+static RngSlot g_rngSlots[RNG_SLOTS];
+static volatile LONG g_rngCalls = 0;
+static volatile LONG g_rngDropped = 0;
+static volatile LONG g_rngHash = (LONG)2166136261u;
+static volatile LONG g_rngTid[4];
+static volatile LONG g_rngTidN = 0;
+static bool g_rngProbeOn = false;
+
+static void* g_realRngA = 0;
+static void* g_realRngB = 0;
+static void* g_realRngC = 0;
+static void* g_realRngD = 0;
+__declspec(align(16)) static unsigned char g_trampRngA[32];
+__declspec(align(16)) static unsigned char g_trampRngB[32];
+__declspec(align(16)) static unsigned char g_trampRngC[32];
+__declspec(align(16)) static unsigned char g_trampRngD[32];
+
+static void LogRngFile(const char* fmt, ...)
+{
+    InitLogDir();
+
+    if (g_logCsInit)
+        EnterCriticalSection(&g_logCs);
+
+    if (!g_rngLogStarted)
+        RotateLogOnce(g_rngLogFile);
+    FILE* f = 0;
+    if (_wfopen_s(&f, g_rngLogFile, g_rngLogStarted ? L"a" : L"w") != 0 || !f)
+    {
+        if (g_logCsInit)
+            LeaveCriticalSection(&g_logCs);
+        return;
+    }
+    g_rngLogStarted = true;
+
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    fprintf(f, "%04u-%02u-%02u %02u:%02u:%02u.%03u ",
+        (unsigned)st.wYear, (unsigned)st.wMonth, (unsigned)st.wDay,
+        (unsigned)st.wHour, (unsigned)st.wMinute, (unsigned)st.wSecond,
+        (unsigned)st.wMilliseconds);
+
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(f, fmt, ap);
+    va_end(ap);
+    fprintf(f, "\n");
+    fclose(f);
+
+    if (g_logCsInit)
+        LeaveCriticalSection(&g_logCs);
+}
+
+// Зовётся из thunk'ов на КАЖДЫЙ вызов Random(): никаких блокировок,
+// только interlocked-операции, ничего из игры не трогаем.
+static void __cdecl RngProbeNote(DWORD caller, DWORD variant)
+{
+    DWORD rva = 0xFFFFFF;
+    if (g_base && caller >= g_base && caller < g_base + g_imageSize)
+        rva = caller - g_base;
+    LONG key = (LONG)((rva << 3) | (variant & 7)) + 1;
+
+    InterlockedIncrement(&g_rngCalls);
+    g_rngHash = (LONG)(((DWORD)g_rngHash ^ (DWORD)key) * 16777619u);
+
+    DWORD tid = __readfsdword(0x24);
+    for (int i = 0; i < 4; ++i)
+    {
+        LONG cur = g_rngTid[i];
+        if ((DWORD)cur == tid)
+            break;
+        if (cur == 0 && InterlockedCompareExchange(&g_rngTid[i], (LONG)tid, 0) == 0)
+        {
+            InterlockedIncrement(&g_rngTidN);
+            break;
+        }
+        if ((DWORD)g_rngTid[i] == tid)
+            break;
+    }
+
+    DWORD h = ((DWORD)key * 2654435761u) >> 20;
+    for (int p = 0; p < 32; ++p)
+    {
+        RngSlot& s = g_rngSlots[(h + (DWORD)p) & (RNG_SLOTS - 1)];
+        LONG k = s.key;
+        if (k == key)
+        {
+            InterlockedIncrement(&s.cnt);
+            return;
+        }
+        if (k == 0)
+        {
+            LONG prev = InterlockedCompareExchange(&s.key, key, 0);
+            if (prev == 0 || prev == key)
+            {
+                InterlockedIncrement(&s.cnt);
+                return;
+            }
+        }
+    }
+    InterlockedIncrement(&g_rngDropped);
+}
+
+struct RngEntry { LONG key; LONG cnt; };
+static RngEntry g_rngEntries[1024];
+static char g_rngLine[32 * 1024];
+
+static int RngEntryCmp(const void* a, const void* b)
+{
+    LONG ka = ((const RngEntry*)a)->key;
+    LONG kb = ((const RngEntry*)b)->key;
+    return ka < kb ? -1 : (ka > kb ? 1 : 0);
+}
+
+// Вход дневного тика: закрыть интервал и записать одну строку.
+static void RngProbeFlushDay(void* session)
+{
+    if (!g_rngProbeOn || !g_settings.enableRngProbe)
+        return;
+
+    char dateBuf[32];
+    dateBuf[0] = 0;
+    __try
+    {
+        int raw = *(int*)((char*)session + OOS_DATE_OFF);
+        FormatVic2Date(raw, dateBuf, sizeof(dateBuf));
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        strcpy_s(dateBuf, "?");
+    }
+
+    int ctr = -1;
+    __try
+    {
+        ctr = *(int*)(g_base + RVA_RNG_COUNTER);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        ctr = -1;
+    }
+
+    LONG calls = InterlockedExchange(&g_rngCalls, 0);
+    DWORD hash = (DWORD)InterlockedExchange(&g_rngHash, (LONG)2166136261u);
+    LONG dropped = InterlockedExchange(&g_rngDropped, 0);
+    LONG thr = InterlockedExchange(&g_rngTidN, 0);
+    for (int i = 0; i < 4; ++i)
+        InterlockedExchange(&g_rngTid[i], 0);
+
+    int ne = 0;
+    for (int i = 0; i < RNG_SLOTS; ++i)
+    {
+        LONG k = g_rngSlots[i].key;
+        if (!k)
+            continue;
+        LONG c = InterlockedExchange(&g_rngSlots[i].cnt, 0);
+        g_rngSlots[i].key = 0;
+        if (c > 0 && ne < 1024)
+        {
+            g_rngEntries[ne].key = k;
+            g_rngEntries[ne].cnt = c;
+            ++ne;
+        }
+    }
+    qsort(g_rngEntries, (size_t)ne, sizeof(RngEntry), RngEntryCmp);
+
+    int pos = _snprintf_s(g_rngLine, sizeof(g_rngLine), _TRUNCATE,
+        "date=%s ctr=%d n=%d h=%08X thr=%d drop=%d |",
+        dateBuf, ctr, (int)calls, hash, (int)thr, (int)dropped);
+    for (int i = 0; i < ne && pos > 0 && pos < (int)sizeof(g_rngLine) - 40; ++i)
+    {
+        DWORD v = (DWORD)(g_rngEntries[i].key - 1);
+        DWORD rva = v >> 3;
+        int n2;
+        if (rva == 0xFFFFFF)
+            n2 = _snprintf_s(g_rngLine + pos, sizeof(g_rngLine) - pos, _TRUNCATE,
+                " ext.%u=%d", (unsigned)(v & 7), (int)g_rngEntries[i].cnt);
+        else
+            n2 = _snprintf_s(g_rngLine + pos, sizeof(g_rngLine) - pos, _TRUNCATE,
+                " %X.%u=%d", (unsigned)rva, (unsigned)(v & 7), (int)g_rngEntries[i].cnt);
+        if (n2 <= 0)
+            break;
+        pos += n2;
+    }
+    LogRngFile("%s", g_rngLine);
+}
+
+__declspec(naked) static void RngHookA()
+{
+    __asm {
+        pushfd
+        pushad
+        mov eax, dword ptr [esp + 0x24]
+        push 1
+        push eax
+        call RngProbeNote
+        add esp, 8
+        popad
+        popfd
+        jmp dword ptr [g_realRngA]
+    }
+}
+
+__declspec(naked) static void RngHookB()
+{
+    __asm {
+        pushfd
+        pushad
+        mov eax, dword ptr [esp + 0x24]
+        push 2
+        push eax
+        call RngProbeNote
+        add esp, 8
+        popad
+        popfd
+        jmp dword ptr [g_realRngB]
+    }
+}
+
+__declspec(naked) static void RngHookC()
+{
+    __asm {
+        pushfd
+        pushad
+        mov eax, dword ptr [esp + 0x24]
+        push 3
+        push eax
+        call RngProbeNote
+        add esp, 8
+        popad
+        popfd
+        jmp dword ptr [g_realRngC]
+    }
+}
+
+__declspec(naked) static void RngHookD()
+{
+    __asm {
+        pushfd
+        pushad
+        mov eax, dword ptr [esp + 0x24]
+        push 4
+        push eax
+        call RngProbeNote
+        add esp, 8
+        popad
+        popfd
+        jmp dword ptr [g_realRngD]
+    }
+}
+
+static bool InstallRngProbe()
+{
+    if (!g_settings.enableRngProbe)
+    {
+        Log("RngProbe: выключен (ENABLE_RNG_PROBE=0)");
+        return false;
+    }
+
+    static const unsigned char pro[6] = { 0x55, 0x8B, 0xEC, 0x83, 0xE4, 0xF8 };
+    unsigned char* a = (unsigned char*)(g_base + RVA_RNG_A);
+    unsigned char* b = (unsigned char*)(g_base + RVA_RNG_B);
+    unsigned char* c = (unsigned char*)(g_base + RVA_RNG_C);
+    unsigned char* d = (unsigned char*)(g_base + RVA_RNG_D);
+    const DWORD objAbs = g_base + RVA_RNG_OBJPTR;
+
+    // cmp dword ptr [abs32], 0 - абсолютный адрес уже перебазирован
+    // загрузчиком, поэтому сверяем с g_base + RVA, а не с константой.
+    bool okAB = memcmp(a, pro, 6) == 0 && memcmp(b, pro, 6) == 0;
+    bool okCD = c[0] == 0x83 && c[1] == 0x3D && c[6] == 0x00 && *(DWORD*)(c + 2) == objAbs &&
+                d[0] == 0x83 && d[1] == 0x3D && d[6] == 0x00 && *(DWORD*)(d + 2) == objAbs;
+    if (!okAB || !okCD)
+    {
+        Log("RngProbe: сигнатуры не совпали (A/B=%d C/D=%d) - не ставим", (int)okAB, (int)okCD);
+        return false;
+    }
+
+    unsigned char expC[7];
+    unsigned char expD[7];
+    memcpy(expC, c, 7);
+    memcpy(expD, d, 7);
+
+    bool ok = true;
+    ok &= StealToTrampoline(RVA_RNG_A, 6, g_trampRngA, sizeof(g_trampRngA), pro, (void*)&RngHookA, &g_realRngA, "RngProbeA");
+    ok &= StealToTrampoline(RVA_RNG_B, 6, g_trampRngB, sizeof(g_trampRngB), pro, (void*)&RngHookB, &g_realRngB, "RngProbeB");
+    ok &= StealToTrampoline(RVA_RNG_C, 7, g_trampRngC, sizeof(g_trampRngC), expC, (void*)&RngHookC, &g_realRngC, "RngProbeC");
+    ok &= StealToTrampoline(RVA_RNG_D, 7, g_trampRngD, sizeof(g_trampRngD), expD, (void*)&RngHookD, &g_realRngD, "RngProbeD");
+
+    g_rngProbeOn = ok;
+    Log("RngProbe: установлен (обёртки Random rva %06X/%06X/%06X/%06X) ok=%d; пишет Logs\\v2dll_rng.log",
+        RVA_RNG_A, RVA_RNG_B, RVA_RNG_C, RVA_RNG_D, (int)ok);
+    if (ok)
+        LogRngFile("armed dll=%s base=%08X (строка на дневной тик: date ctr n h thr drop | RVA.вариант=число)",
+            MOD_VERSION, g_base);
+    return ok;
+}
+
+// ---------------------------------------------------------------
+// ENABLE_STATE_PROBE - хэши состояния симуляции по дням (Logs\v2dll_state.log).
+//
+// Счётчик Random() - запаздывающий индикатор: деньги/цены могут разойтись
+// на сотни дней раньше, чем изменится число вызовов. Здесь на входе
+// дневного тика (тот же момент, что SYNC в v2dll_oos.log и строка в
+// v2dll_rng.log) считаем хэши полей, которые движок сам суммирует в
+// FUN_006859c0 (мировая статистика), и пишем по строкам:
+//   date= nC= nProv= nPop= nState= nBld= hc= hs= hb= hq= hp= hm=  - хэши групп
+//       (hc страны, hs сбережения штатов, hb фабрики, hq денежные пулы населения
+//        страна x страта x тип попа, hp поны по провинциям, hm рынок)
+//   C <hex8 на страну>    - казна, снимок казны, население, индустрия
+//                           страны + её штаты и фабрики (хэш страны)
+//   P <hex8 на провинцию> - деньги попов провинции (все корзины типов)
+//   M <цены int64 hex> | D <спрос int64 hex>  - вектора рынка целиком
+// Сравнение хоста и клиента: Patches\compare_state_logs.py - первый день с
+// отличием, какая группа, какие страны/провинции. Все поля читаются
+// только на главном потоке на входе тика (параллельные циклы дня ещё не
+// запущены), каждое чтение под SEH.
+//
+// Смещения (из FUN_006859c0, мировой тик, param_1 = сессия):
+//   сессия +0xADC/+0xAE0 vector<CCountry*>; +0xACC/+0xAD0 vector<провинция*>
+//   страна +0xE78 казна int64, +0xE80 снимок, +0x198 индустрия int64,
+//          +0x12E8 население, +0xE44 список штатов (узел: +0 штат, +8 next)
+//   штат   +0x228 int64, +0x60 первая фабрика (next = фабрика+0x224)
+//   фабрика +0x210 int64, +0x218 int32
+//   провинция +0x194 -> массив корзин по типам попов (шаг 0x10, голова +0),
+//          поп: +0x180 int64, +0x250 int64, next = поп+0x27C
+//   число типов попов - вектор DAT_0131BB34(+0xC..+0x10)
+// ---------------------------------------------------------------
+
+static const int SP_SESSION_COUNTRIES   = 0xADC;
+static const int SP_SESSION_PROVINCES   = 0xACC;
+static const int SP_COUNTRY_MONEY       = 0xE78;
+static const int SP_COUNTRY_MONEY_SNAP  = 0xE80;
+static const int SP_COUNTRY_INDUSTRY    = 0x198;
+static const int SP_COUNTRY_POPULATION  = 0x12E8;
+static const int SP_COUNTRY_STATES      = 0xE44;
+static const int SP_STATE_SAVINGS       = 0x228;
+static const int SP_STATE_BUILDINGS     = 0x60;
+static const int SP_BUILDING_NEXT       = 0x224;
+static const int SP_BUILDING_VAL        = 0x210;
+static const int SP_BUILDING_VAL2       = 0x218;
+static const int SP_PROVINCE_POPBUCKETS = 0x194;
+static const int SP_POP_VAL1            = 0x180;
+static const int SP_POP_VAL2            = 0x250;
+static const int SP_POP_NEXT            = 0x27C;
+static const DWORD RVA_POPTYPE_REGISTRY = 0xF1BB34;   // VA 0x131BB34
+static const int SP_NODE_GUARD          = 400000;
+static const int SP_POP_STRIDE_DW       = 0x2A8 / 4;   // сырой поп: 170 DWORD
+static const int SP_COUNTRY_POOLS       = 0xA0;    // -> [3 страты] -> +0x18 -> int64[id типа попа]
+static const int SP_POPTYPE_ID          = 0x28;
+
+static char g_stateLine[256 * 1024];
+static bool g_stateFaultLogged = false;
+static bool g_stateProbeReady = false;
+static bool g_stateSampled = false;
+static char* g_spSampleCountry = 0;
+static char* g_spSampleState = 0;
+static char* g_spSampleBuilding = 0;
+static char* g_spSamplePop = 0;
+
+static inline DWORD SpMix(DWORD h, DWORD v)
+{
+    h ^= v;
+    h *= 16777619u;
+    return h;
+}
+
+static inline DWORD SpMix64(DWORD h, const char* p)
+{
+    h = SpMix(h, *(const DWORD*)p);
+    h = SpMix(h, *(const DWORD*)(p + 4));
+    return h;
+}
+
+static void SpHex8(char* buf, int* pos, DWORD v)
+{
+    static const char hx[] = "0123456789ABCDEF";
+    for (int i = 7; i >= 0; --i)
+        buf[*pos + (7 - i)] = hx[(v >> (i * 4)) & 15];
+    *pos += 8;
+}
+
+static void SpHex16(char* buf, int* pos, const char* p)
+{
+    SpHex8(buf, pos, *(const DWORD*)(p + 4));
+    SpHex8(buf, pos, *(const DWORD*)p);
+}
+
+static void LogStateText(const char* text)
+{
+    InitLogDir();
+
+    if (g_logCsInit)
+        EnterCriticalSection(&g_logCs);
+
+    if (!g_stateLogStarted)
+        RotateLogOnce(g_stateLogFile);
+    FILE* f = 0;
+    if (_wfopen_s(&f, g_stateLogFile, g_stateLogStarted ? L"a" : L"w") != 0 || !f)
+    {
+        if (g_logCsInit)
+            LeaveCriticalSection(&g_logCs);
+        return;
+    }
+    g_stateLogStarted = true;
+
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    fprintf(f, "%04u-%02u-%02u %02u:%02u:%02u.%03u %s\n",
+        (unsigned)st.wYear, (unsigned)st.wMonth, (unsigned)st.wDay,
+        (unsigned)st.wHour, (unsigned)st.wMinute, (unsigned)st.wSecond,
+        (unsigned)st.wMilliseconds, text);
+    fclose(f);
+
+    if (g_logCsInit)
+        LeaveCriticalSection(&g_logCs);
+}
+
+// Хэш одной страны вместе со штатами и фабриками; в hs/hb пишутся группы.
+// sub[0..5] (необязательно): хэши полей страны отдельно - казна+снимок, индустрия, население,
+// пулы попов, сбережения штатов, фабрики. Строка Z в логе: по ним видно, ЧТО расходится.
+static DWORD SpHashCountry(char* c, DWORD* hs, DWORD* hb, DWORD* hq, char* typeBegin, int nTypes,
+    int* nStates, int* nBuildings, DWORD* sub)
+{
+    DWORD loc[6];
+    if (!sub)
+        sub = loc;
+    for (int i = 0; i < 6; ++i)
+        sub[i] = 2166136261u;
+    DWORD h = 2166136261u;
+    h = SpMix64(h, c + SP_COUNTRY_MONEY);
+    h = SpMix64(h, c + SP_COUNTRY_MONEY_SNAP);
+    h = SpMix64(h, c + SP_COUNTRY_INDUSTRY);
+    h = SpMix(h, *(DWORD*)(c + SP_COUNTRY_POPULATION));
+    sub[0] = SpMix64(SpMix64(sub[0], c + SP_COUNTRY_MONEY), c + SP_COUNTRY_MONEY_SNAP);
+    sub[1] = SpMix64(sub[1], c + SP_COUNTRY_INDUSTRY);
+    sub[2] = SpMix(sub[2], *(DWORD*)(c + SP_COUNTRY_POPULATION));
+
+    // общие денежные пулы населения страны: 3 страты x тип попа (их сумму
+    // движок считает в FUN_006859c0 как local_60)
+    char* poolArr = *(char**)(c + SP_COUNTRY_POOLS);
+    if (poolArr && typeBegin)
+    {
+        for (int k = 0; k < 3; ++k)
+        {
+            char* rec = *(char**)(poolArr + k * 4);
+            if (!rec)
+                continue;
+            char* vals = *(char**)(rec + 0x18);
+            if (!vals)
+                continue;
+            for (int t = 0; t < nTypes; ++t)
+            {
+                char* tp = *(char**)(typeBegin + t * 4);
+                int id = tp ? *(int*)(tp + SP_POPTYPE_ID) : t;
+                if (id < 0 || id > 1024)
+                    continue;
+                h = SpMix64(h, vals + id * 8);
+                *hq = SpMix64(*hq, vals + id * 8);
+                sub[3] = SpMix64(sub[3], vals + id * 8);
+            }
+        }
+    }
+
+    char* node = *(char**)(c + SP_COUNTRY_STATES);
+    int guardS = 0;
+    while (node && guardS++ < SP_NODE_GUARD)
+    {
+        char* state = *(char**)node;
+        char* next = *(char**)(node + 8);
+        if (state)
+        {
+            ++*nStates;
+            if (!g_spSampleState && *(int*)(state + SP_STATE_SAVINGS + 4) != 0)
+                g_spSampleState = state;
+            h = SpMix64(h, state + SP_STATE_SAVINGS);
+            *hs = SpMix64(*hs, state + SP_STATE_SAVINGS);
+            sub[4] = SpMix64(sub[4], state + SP_STATE_SAVINGS);
+            char* b = *(char**)(state + SP_STATE_BUILDINGS);
+            int guardB = 0;
+            while (b && guardB++ < SP_NODE_GUARD)
+            {
+                ++*nBuildings;
+                if (!g_spSampleBuilding && *(int*)(b + SP_BUILDING_VAL) != 0)
+                    g_spSampleBuilding = b;
+                h = SpMix64(h, b + SP_BUILDING_VAL);
+                h = SpMix(h, *(DWORD*)(b + SP_BUILDING_VAL2));
+                *hb = SpMix64(*hb, b + SP_BUILDING_VAL);
+                *hb = SpMix(*hb, *(DWORD*)(b + SP_BUILDING_VAL2));
+                sub[5] = SpMix64(sub[5], b + SP_BUILDING_VAL);
+                sub[5] = SpMix(sub[5], *(DWORD*)(b + SP_BUILDING_VAL2));
+                b = *(char**)(b + SP_BUILDING_NEXT);
+            }
+        }
+        node = next;
+    }
+    return h;
+}
+
+static DWORD SpHashProvincePops(char* prov, int nBuckets, int* nPops)
+{
+    char* arr = *(char**)(prov + SP_PROVINCE_POPBUCKETS);
+    if (!arr)
+        return 0;
+    DWORD h = 2166136261u;
+    for (int b = 0; b < nBuckets; ++b)
+    {
+        char* pop = *(char**)(arr + b * 16);
+        int guard = 0;
+        while (pop && guard++ < SP_NODE_GUARD)
+        {
+            ++*nPops;
+            if (!g_spSamplePop && *(int*)(pop + SP_POP_VAL1) != 0)
+                g_spSamplePop = pop;
+            h = SpMix(h, (DWORD)b);
+            h = SpMix64(h, pop + SP_POP_VAL1);
+            h = SpMix64(h, pop + SP_POP_VAL2);
+            pop = *(char**)(pop + SP_POP_NEXT);
+        }
+    }
+    return h;
+}
+
+// ---------------------------------------------------------------
+// Детальный дамп состояния (5.66) - первые SP_DETAIL_DAYS дней сессии.
+//
+// Хэши в строках C/P/M показывают только ФАКТ расхождения (хост и клиенты расходятся уже
+// на втором дне, у почти всех провинций и у 20 стран), но не его размер и не поле, с
+// которого оно началось. Поэтому на первых днях игры пишем сырые значения:
+//   D date=...                                          начало блока дня
+//   D C <i> <TAG> m=<money> s=<snap> n=<industry> p=<население>   (int64 -> 16 hex, 15 дробных бит)
+//   D Q <i> <k>: <значения пула страты k по id типа попа, . = 0>
+//   D S <i> <savings штата> ...                          сбережения штатов страны
+//   D B <i> <val0:val1> ...                              значения фабрик (+0x210 : +0x218)
+//   D P <провинция> <корзина> <170 DWORD сырого попа>     попы первых SP_DETAIL_PROVS провинций
+// Сравнение: Patches\compare_state_detail.py host.log client.log.
+// ---------------------------------------------------------------
+
+static const int SP_DETAIL_DAYS  = 45;        // страны/штаты/фабрики: первые 45 дней
+static const int SP_DETAIL_POP_DAYS = 3;      // сырые попы: только первые 3 дня
+static const int SP_DETAIL_PROVS = 60;
+static int g_spDetailLeft = SP_DETAIL_DAYS;
+static const int SP_DETAIL_CAP = 1536 * 1024;
+static char g_spDetailBuf[SP_DETAIL_CAP];
+
+static void SpPut(int* pos, const char* fmt, ...)
+{
+    if (*pos >= SP_DETAIL_CAP - 4096)
+        return;
+    va_list ap;
+    va_start(ap, fmt);
+    int n = _vsnprintf_s(g_spDetailBuf + *pos, SP_DETAIL_CAP - *pos, _TRUNCATE, fmt, ap);
+    va_end(ap);
+    if (n > 0)
+        *pos += n;
+}
+
+static void SpPutHex16(int* pos, const char* p)
+{
+    if (*pos >= SP_DETAIL_CAP - 64)
+        return;
+    SpHex16(g_spDetailBuf, pos, p);
+}
+
+static void StateDetailDump(char* session, const char* dateBuf, bool withPops)
+{
+    int pos = 0;
+    SpPut(&pos, "D date=%s", dateBuf);
+    __try
+    {
+        char* reg = *(char**)(g_base + RVA_POPTYPE_REGISTRY);
+        int nBuckets = 0;
+        char* typeBegin = 0;
+        if (reg)
+        {
+            char* rb = *(char**)(reg + 0xC);
+            char* re = *(char**)(reg + 0x10);
+            if (rb && re >= rb)
+            {
+                nBuckets = (int)((re - rb) / 4);
+                typeBegin = rb;
+            }
+        }
+
+        char* cb = *(char**)(session + SP_SESSION_COUNTRIES);
+        char* ce = *(char**)(session + SP_SESSION_COUNTRIES + 4);
+        int nC = (cb && ce >= cb) ? (int)((ce - cb) / 4) : 0;
+        for (int i = 0; i < nC; ++i)
+        {
+            char* c = *(char**)(cb + i * 4);
+            if (!c)
+                continue;
+            char tag[4] = { '?', '?', '?', 0 };
+            for (int k = 0; k < 3; ++k)
+            {
+                char ch = c[0x1C + k];
+                if ((ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_')
+                    tag[k] = ch;
+            }
+            SpPut(&pos, "\nD C %d %s m=", i, tag);
+            SpPutHex16(&pos, c + SP_COUNTRY_MONEY);
+            SpPut(&pos, " s=");
+            SpPutHex16(&pos, c + SP_COUNTRY_MONEY_SNAP);
+            SpPut(&pos, " n=");
+            SpPutHex16(&pos, c + SP_COUNTRY_INDUSTRY);
+            SpPut(&pos, " p=%08X", *(DWORD*)(c + SP_COUNTRY_POPULATION));
+
+            char* poolArr = *(char**)(c + SP_COUNTRY_POOLS);
+            if (poolArr && typeBegin)
+            {
+                for (int k = 0; k < 3; ++k)
+                {
+                    char* rec = *(char**)(poolArr + k * 4);
+                    char* vals = rec ? *(char**)(rec + 0x18) : 0;
+                    if (!vals)
+                        continue;
+                    bool any = false;
+                    for (int t = 0; t < nBuckets; ++t)
+                    {
+                        char* tp = *(char**)(typeBegin + t * 4);
+                        int id = tp ? *(int*)(tp + SP_POPTYPE_ID) : t;
+                        if (id >= 0 && id <= 1024 && *(long long*)(vals + id * 8) != 0)
+                            any = true;
+                    }
+                    if (!any)
+                        continue;
+                    SpPut(&pos, "\nD Q %d %d:", i, k);
+                    for (int t = 0; t < nBuckets; ++t)
+                    {
+                        char* tp = *(char**)(typeBegin + t * 4);
+                        int id = tp ? *(int*)(tp + SP_POPTYPE_ID) : t;
+                        if (id < 0 || id > 1024)
+                            continue;
+                        if (*(long long*)(vals + id * 8) == 0)
+                            SpPut(&pos, " .");
+                        else
+                        {
+                            SpPut(&pos, " ");
+                            SpPutHex16(&pos, vals + id * 8);
+                        }
+                    }
+                }
+            }
+
+            SpPut(&pos, "\nD S %d", i);
+            char* node = *(char**)(c + SP_COUNTRY_STATES);
+            int guardS = 0;
+            while (node && guardS++ < SP_NODE_GUARD)
+            {
+                char* state = *(char**)node;
+                if (state)
+                {
+                    SpPut(&pos, " ");
+                    SpPutHex16(&pos, state + SP_STATE_SAVINGS);
+                }
+                node = *(char**)(node + 8);
+            }
+            SpPut(&pos, "\nD B %d", i);
+            node = *(char**)(c + SP_COUNTRY_STATES);
+            guardS = 0;
+            while (node && guardS++ < SP_NODE_GUARD)
+            {
+                char* state = *(char**)node;
+                if (state)
+                {
+                    char* b = *(char**)(state + SP_STATE_BUILDINGS);
+                    int guardB = 0;
+                    while (b && guardB++ < SP_NODE_GUARD)
+                    {
+                        SpPut(&pos, " ");
+                        SpPutHex16(&pos, b + SP_BUILDING_VAL);
+                        SpPut(&pos, ":%08X", *(DWORD*)(b + SP_BUILDING_VAL2));
+                        b = *(char**)(b + SP_BUILDING_NEXT);
+                    }
+                }
+                node = *(char**)(node + 8);
+            }
+        }
+
+        char* pb = *(char**)(session + SP_SESSION_PROVINCES);
+        char* pe = *(char**)(session + SP_SESSION_PROVINCES + 4);
+        int nProv = (pb && pe >= pb) ? (int)((pe - pb) / 4) : 0;
+        for (int i = 0; withPops && i < nProv && i < SP_DETAIL_PROVS; ++i)
+        {
+            char* p = *(char**)(pb + i * 4);
+            if (!p)
+                continue;
+            char* arr = *(char**)(p + SP_PROVINCE_POPBUCKETS);
+            if (!arr)
+                continue;
+            for (int b = 0; b < nBuckets; ++b)
+            {
+                char* pop = *(char**)(arr + b * 16);
+                int guard = 0;
+                while (pop && guard++ < 200)
+                {
+                    SpPut(&pos, "\nD P %d %d", i, b);
+                    for (int w = 0; w < SP_POP_STRIDE_DW; ++w)
+                        SpPut(&pos, " %08X", *(DWORD*)(pop + w * 4));
+                    pop = *(char**)(pop + SP_POP_NEXT);
+                }
+            }
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        SpPut(&pos, "\nD ! исключение при чтении состояния");
+    }
+    g_spDetailBuf[pos < SP_DETAIL_CAP ? pos : SP_DETAIL_CAP - 1] = 0;
+    LogStateText(g_spDetailBuf);
+}
+
+// Окно дат для сырых дампов (SP_WINDOW_FROM/SP_WINDOW_TO, формат ГГГГ.М.Д).
+static bool SpParseDate(const char* s, int* y, int* m, int* d)
+{
+    if (!s || !s[0])
+        return false;
+    int v[3] = { 0, 0, 0 };
+    int idx = 0, got = 0;
+    for (const char* p = s; *p && idx < 3; ++p)
+    {
+        if (*p >= '0' && *p <= '9') { v[idx] = v[idx] * 10 + (*p - '0'); got = 1; }
+        else if (got) { ++idx; got = 0; }
+    }
+    if (got)
+        ++idx;
+    if (idx < 3 || v[0] < 1 || v[1] < 1 || v[1] > 12 || v[2] < 1 || v[2] > 31)
+        return false;
+    *y = v[0]; *m = v[1]; *d = v[2];
+    return true;
+}
+
+// Дата из dateBuf внутри окна? Пустое окно = false. Задан только FROM - от даты
+// и до конца игры, только TO - от начала и до даты. Неразборчивая граница игнорируется.
+static bool SpDateInWindow(const char* dateBuf)
+{
+    if (!g_settings.spWindowFrom[0] && !g_settings.spWindowTo[0])
+        return false;
+    int y, m, d;
+    if (!SpParseDate(dateBuf, &y, &m, &d))
+        return false;
+    int fy, fm, fd, ty, tm, td;
+    if (SpParseDate(g_settings.spWindowFrom, &fy, &fm, &fd)
+        && (y < fy || (y == fy && (m < fm || (m == fm && d < fd)))))
+        return false;
+    if (SpParseDate(g_settings.spWindowTo, &ty, &tm, &td)
+        && (y > ty || (y == ty && (m > tm || (m == tm && d > td)))))
+        return false;
+    return true;
+}
+
+// PATCH_STATE_SAVINGS_CAP (5.76) - лечение рассинхрона "казна vs сбережения штата".
+// Сбережения штата (+0x228, int64 2^15) при записи MP-сейва обрезаются по int32
+// (65536.00 = 0x80000000), излишек выгружается в казну страны. Клиент получает
+// такой сейв, хост держит полный int64 - состояния расходятся на первом же тике
+// (кейс KUK #115: 0xE6DC5B46 против 0x7FFFFFFF + 0x66DC5B47 в казне).
+// Нормализация на входе дневного тика, одинаковая на всех машинах: превышение
+// капа переносится в казну страны (int64). Сумма денег не меняется, раскладка
+// становится идентичной.
+static void StateSavingsNormalize(void* sessionV)
+{
+    if (!g_settings.patchStateSavingsCap || !sessionV)
+        return;
+    char* session = (char*)sessionV;
+    static bool s_logged = false;
+    __try
+    {
+        char* cb = *(char**)(session + SP_SESSION_COUNTRIES);
+        char* ce = *(char**)(session + SP_SESSION_COUNTRIES + 4);
+        int nc = (cb && ce >= cb) ? (int)((ce - cb) / 4) : 0;
+        long long cap = (long long)g_settings.stateSavingsCapPounds * 32768;
+        int fixed = 0;
+        for (int i = 0; i < nc; ++i)
+        {
+            char* c = *(char**)(cb + i * 4);
+            if (!c)
+                continue;
+            char* node = *(char**)(c + SP_COUNTRY_STATES);
+            int guard = 0;
+            while (node && guard++ < SP_NODE_GUARD)
+            {
+                char* st = *(char**)node;
+                char* next = *(char**)(node + 8);
+                if (st)
+                {
+                    long long v = *(long long*)(st + SP_STATE_SAVINGS);
+                    if (v > cap)
+                    {
+                        *(long long*)(st + SP_STATE_SAVINGS) = cap;
+                        *(long long*)(c + SP_COUNTRY_MONEY) += v - cap;
+                        ++fixed;
+                    }
+                }
+                node = next;
+            }
+        }
+        if (fixed > 0 && !s_logged)
+        {
+            s_logged = true;
+            Log("StateSavingsCap: превышение сбережений перенесено в казну (штатов: %d, кап %d ф.)",
+                fixed, g_settings.stateSavingsCapPounds);
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+    }
+}
+
+static void StateProbeFlushDay(void* sessionV)
+{
+    if (!g_stateProbeReady || !g_settings.enableStateProbe || !sessionV)
+        return;
+
+    char* session = (char*)sessionV;
+    char dateBuf[32];
+    dateBuf[0] = 0;
+    __try
+    {
+        int raw = *(int*)(session + OOS_DATE_OFF);
+        FormatVic2Date(raw, dateBuf, sizeof(dateBuf));
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        strcpy_s(dateBuf, "?");
+    }
+
+    int nC = 0, nProv = 0, nPop = 0, nStates = 0, nBuildings = 0;
+    DWORD hc = 2166136261u, hs = 2166136261u, hb = 2166136261u, hp = 2166136261u, hm = 2166136261u,
+          hq = 2166136261u;
+    char* cLine = 0;
+    int cPos = 0;
+    int pPos = 0;
+    static char cBuf[64 * 1024];
+    static char zBuf[48 * 1024];
+    int zPos = 0;
+    static char pBuf[160 * 1024];
+    static char mBuf[16 * 1024];
+    int mPos = 0;
+
+    __try
+    {
+        char* reg = *(char**)(g_base + RVA_POPTYPE_REGISTRY);
+        int nBuckets = 0;
+        char* typeBegin = 0;
+        if (reg)
+        {
+            char* rb = *(char**)(reg + 0xC);
+            char* re = *(char**)(reg + 0x10);
+            if (rb && re >= rb)
+            {
+                nBuckets = (int)((re - rb) / 4);
+                typeBegin = rb;
+            }
+        }
+
+        // страны
+        char* cb = *(char**)(session + SP_SESSION_COUNTRIES);
+        char* ce = *(char**)(session + SP_SESSION_COUNTRIES + 4);
+        cPos = 0;
+        if (cb && ce >= cb)
+        {
+            nC = (int)((ce - cb) / 4);
+            for (int i = 0; i < nC && cPos < (int)sizeof(cBuf) - 16; ++i)
+            {
+                char* c = *(char**)(cb + i * 4);
+                DWORD ch = 0;
+                if (c)
+                {
+                    if (!g_spSampleCountry && *(int*)(c + SP_COUNTRY_POPULATION) > 100000 &&
+                        *(long long*)(c + SP_COUNTRY_MONEY) != 0)
+                        g_spSampleCountry = c;
+                    DWORD sub[6];
+                    ch = SpHashCountry(c, &hs, &hb, &hq, typeBegin, nBuckets, &nStates, &nBuildings, sub);
+                    hc = SpMix(hc, ch);
+                    if (zPos < (int)sizeof(zBuf) - 64)
+                    {
+                        zBuf[zPos++] = ' ';
+                        for (int k = 0; k < 6; ++k)
+                            SpHex8(zBuf, &zPos, sub[k]);
+                    }
+                }
+                else if (zPos < (int)sizeof(zBuf) - 64)
+                {
+                    zBuf[zPos++] = ' ';
+                    for (int k = 0; k < 6; ++k)
+                        SpHex8(zBuf, &zPos, 0);
+                }
+                cBuf[cPos++] = ' ';
+                SpHex8(cBuf, &cPos, ch);
+            }
+        }
+        (void)cLine;
+
+        // провинции и их поны
+        char* pb = *(char**)(session + SP_SESSION_PROVINCES);
+        char* pe = *(char**)(session + SP_SESSION_PROVINCES + 4);
+        pPos = 0;
+        if (pb && pe >= pb && nBuckets > 0 && nBuckets < 256)
+        {
+            nProv = (int)((pe - pb) / 4);
+            for (int i = 0; i < nProv && pPos < (int)sizeof(pBuf) - 16; ++i)
+            {
+                char* p = *(char**)(pb + i * 4);
+                DWORD ph = 0;
+                if (p)
+                {
+                    ph = SpHashProvincePops(p, nBuckets, &nPop);
+                    hp = SpMix(hp, ph);
+                }
+                pBuf[pPos++] = ' ';
+                SpHex8(pBuf, &pPos, ph);
+            }
+        }
+
+        // рынок целиком
+        char* market = *(char**)(session + OFF_SESSION_MARKET);
+        if (market)
+        {
+            char* pr = *(char**)(market + OFF_MARKET_PRICES);
+            char* pre = *(char**)(market + OFF_MARKET_PRICES + 4);
+            if (pr && pre >= pr && (pre - pr) < 8 * 512)
+            {
+                for (char* q = pr; q + 8 <= pre && mPos < (int)sizeof(mBuf) - 64; q += 8)
+                {
+                    mBuf[mPos++] = ' ';
+                    SpHex16(mBuf, &mPos, q);
+                    hm = SpMix64(hm, q);
+                }
+            }
+            mBuf[mPos++] = ' ';
+            mBuf[mPos++] = '|';
+            char* dr = *(char**)(market + OFF_MARKET_DEMAND);
+            char* dre = *(char**)(market + OFF_MARKET_DEMAND + 4);
+            if (dr && dre >= dr && (dre - dr) < 8 * 512)
+            {
+                for (char* q = dr; q + 8 <= dre && mPos < (int)sizeof(mBuf) - 64; q += 8)
+                {
+                    mBuf[mPos++] = ' ';
+                    SpHex16(mBuf, &mPos, q);
+                    hm = SpMix64(hm, q);
+                }
+            }
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        if (!g_stateFaultLogged)
+        {
+            g_stateFaultLogged = true;
+            Log("StateProbe: исключение при чтении состояния (дата %s) - строки за этот день неполные", dateBuf);
+        }
+    }
+    cBuf[cPos] = 0;
+    zBuf[zPos] = 0;
+    pBuf[pPos] = 0;
+    mBuf[mPos] = 0;
+
+    _snprintf_s(g_stateLine, sizeof(g_stateLine), _TRUNCATE,
+        "date=%s nC=%d nProv=%d nPop=%d nState=%d nBld=%d hc=%08X hs=%08X hb=%08X hq=%08X hp=%08X hm=%08X",
+        dateBuf, nC, nProv, nPop, nStates, nBuildings, hc, hs, hb, hq, hp, hm);
+    if (!g_stateSampled && g_spSampleCountry && g_spSamplePop)
+    {
+        g_stateSampled = true;
+        __try
+        {
+            Log("StateProbe: пример (проверка смещений) страна: казна=%.2f снимок=%.2f индустрия=%.2f население=%d",
+                (double)*(long long*)(g_spSampleCountry + SP_COUNTRY_MONEY) / 32768.0,
+                (double)*(long long*)(g_spSampleCountry + SP_COUNTRY_MONEY_SNAP) / 32768.0,
+                (double)*(long long*)(g_spSampleCountry + SP_COUNTRY_INDUSTRY) / 32768.0,
+                *(int*)(g_spSampleCountry + SP_COUNTRY_POPULATION));
+            Log("StateProbe: пример поп: +180=%.2f +250=%.2f; штат +228=%.2f; фабрика +210=%.2f +218=%d; типов попов=%d",
+                (double)*(long long*)(g_spSamplePop + SP_POP_VAL1) / 32768.0,
+                (double)*(long long*)(g_spSamplePop + SP_POP_VAL2) / 32768.0,
+                g_spSampleState ? (double)*(long long*)(g_spSampleState + SP_STATE_SAVINGS) / 32768.0 : -1.0,
+                g_spSampleBuilding ? (double)*(long long*)(g_spSampleBuilding + SP_BUILDING_VAL) / 32768.0 : -1.0,
+                g_spSampleBuilding ? *(int*)(g_spSampleBuilding + SP_BUILDING_VAL2) : -1,
+                (int)((*(char**)((*(char**)(g_base + RVA_POPTYPE_REGISTRY)) + 0x10) -
+                       *(char**)((*(char**)(g_base + RVA_POPTYPE_REGISTRY)) + 0xC)) / 4));
+            if (g_spSampleCountry)
+            {
+                char* pa = *(char**)(g_spSampleCountry + SP_COUNTRY_POOLS);
+                char* r0 = pa ? *(char**)pa : 0;
+                char* v0 = r0 ? *(char**)(r0 + 0x18) : 0;
+                if (v0)
+                    Log("StateProbe: пример пул страты 0, типы 0..3: %.2f %.2f %.2f %.2f",
+                        (double)*(long long*)(v0) / 32768.0, (double)*(long long*)(v0 + 8) / 32768.0,
+                        (double)*(long long*)(v0 + 16) / 32768.0, (double)*(long long*)(v0 + 24) / 32768.0);
+            }
+            Log("StateProbe: день %s: стран %d, провинций %d, попов %d, штатов %d, фабрик %d",
+                dateBuf, nC, nProv, nPop, nStates, nBuildings);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            Log("StateProbe: исключение при чтении примера");
+        }
+    }
+    LogStateText(g_stateLine);
+    _snprintf_s(g_stateLine, sizeof(g_stateLine), _TRUNCATE, "C%s", cBuf);
+    LogStateText(g_stateLine);
+    _snprintf_s(g_stateLine, sizeof(g_stateLine), _TRUNCATE, "Z%s", zBuf);
+    LogStateText(g_stateLine);
+    _snprintf_s(g_stateLine, sizeof(g_stateLine), _TRUNCATE, "P%s", pBuf);
+    LogStateText(g_stateLine);
+    _snprintf_s(g_stateLine, sizeof(g_stateLine), _TRUNCATE, "M%s", mBuf);
+    LogStateText(g_stateLine);
+    static bool s_windowLogged = false;
+    bool spInWindow = SpDateInWindow(dateBuf);
+    if (spInWindow && !s_windowLogged)
+    {
+        s_windowLogged = true;
+        Log("StateProbe: SP_WINDOW активен (%s .. %s) - сырые дампы D каждый день, включая попы",
+            g_settings.spWindowFrom, g_settings.spWindowTo);
+    }
+    bool spDump = g_spDetailLeft > 0;
+    bool spPops = false;
+    if (spDump)
+    {
+        --g_spDetailLeft;
+        spPops = g_spDetailLeft >= SP_DETAIL_DAYS - SP_DETAIL_POP_DAYS;
+    }
+    if (spInWindow)
+    {
+        spDump = true;
+        spPops = true;
+    }
+    if (spDump)
+        StateDetailDump(session, dateBuf, spPops);
+}
+
+static void InstallStateProbe()
+{
+    if (!g_settings.enableStateProbe)
+    {
+        Log("StateProbe: выключен (ENABLE_STATE_PROBE=0)");
+        return;
+    }
+    g_stateProbeReady = true;
+    Log("StateProbe: готов (хэши состояния по дням в Logs\\v2dll_state.log, на входе дневного тика)");
+    LogStateText("armed dll=" MOD_VERSION " (строки на день: date..., C <страны>, P <провинции>, M <цены | спрос>)");
+}
+
+// ---------------------------------------------------------------
+// Event-roll probe (5.63, часть ENABLE_RNG_PROBE) - кто на самом деле тратит
+// Random() в дневном тике.
+//
+// Из логов 5.62 видно: обёртки Random() дают ~780 вызовов в день, а счётчик
+// растёт на ~4100. Остальное - инлайн-розыгрыши, которые счётчик тоже
+// инкрементируют, но через обёртки не идут: 1000 заготовленных чисел в
+// FUN_006859c0 и главное - бросок MTTH событий FUN_008A7CD0 (в нечётные дни
+// по странам, в чётные по провинциям): для каждого события из списка
+// страны/провинции движок вызывает проверку триггеров события (vfunc +0x18
+// объекта event+0x30, заполняет 16-байтовую область scope на [ESP+0x40]); если
+// она истинна - считает шанс MTTH (FUN_008AE380), делает один розыгрыш
+// (inc [F20C14]) и при rand%1000000 < шанс запускает событие (FUN_008A8120).
+// Значит, дельта счётчика между хостом и клиентом = на сколько розыгрышей
+// больше прошло проверку триггеров у одной из машин, т.е. триггеры события
+// посчитались по-разному из-за различий в состоянии.
+//
+// Хуки на два места сравнения "cmp esi,[esp+disp]; jge" (RVA 4A7EB1 - страны,
+// 4A8092 - провинции; 6 байт, прыжок jge повторяем в thunk): на каждый
+// розыгрыш запоминаем (режим, id события event+8/+0xC, scope [esp+0x40..+0x4C],
+// шанс, rand). Раз в день (вход тика, строка после "date=" в v2dll_rng.log):
+//   E date= rolls= fired= h= | <режим><id0>.<id1>=<розыгрышей>/<сработало>[:scope,...] ...
+//   F <режим><id0>.<id1> scope=<4 dword> chance= rand=      - каждое сработавшее
+// Сравнение хоста и клиента: Patches\compare_rng_logs.py (раздел E).
+// ---------------------------------------------------------------
+
+static const DWORD RVA_EV_ROLL_1 = 0x4A7EB1;   // 3B 74 24 28 7D 42 : cmp esi,[esp+28h]; jge 4A7EF9
+static const DWORD RVA_EV_ROLL_2 = 0x4A8092;   // 3B 74 24 30 7D 42 : cmp esi,[esp+30h]; jge 4A80DA
+static const unsigned char EV_ROLL_SIG_1[6] = { 0x3B, 0x74, 0x24, 0x28, 0x7D, 0x42 };
+static const unsigned char EV_ROLL_SIG_2[6] = { 0x3B, 0x74, 0x24, 0x30, 0x7D, 0x42 };
+static DWORD g_evSkip1 = 0, g_evResume1 = 0, g_evSkip2 = 0, g_evResume2 = 0;
+static bool g_evProbeOn = false;
+
+static int CountryHumanFlag(int idx);
+
+struct EvEntry
+{
+    DWORD used, mode, id0, id1, rolls, fired, nScopes;
+    DWORD scopes[6][5];
+};
+static const int EV_SLOTS = 4096;
+static EvEntry g_evTab[EV_SLOTS];
+struct EvFiredRec { DWORD mode, id0, id1, sc[5], chance, rnd; int hum; };
+static EvFiredRec g_evFired[512];
+static DWORD g_evRolls = 0, g_evFiredN = 0, g_evHash = 2166136261u, g_evDropped = 0;
+static char g_evLine[512 * 1024];
+
+// idx - переменная внешнего цикла (страна / провинция); sc[4] = idx. Первые два слова
+// scope ([esp+40h],[esp+44h]) пишет сам вызов триггеров, в хеш они не входят.
+static void __cdecl EventRollNote(char* ev, char* scope, int rnd, int chance, int mode, int idx)
+{
+    DWORD id0, id1, sc[5];
+    __try
+    {
+        id0 = *(DWORD*)(ev + 8);
+        id1 = *(DWORD*)(ev + 0xC);
+        for (int i = 0; i < 4; ++i)
+            sc[i] = *(DWORD*)(scope + i * 4);
+        sc[4] = (DWORD)idx;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return;
+    }
+    bool fire = rnd < chance;
+    DWORD h = g_evHash;
+    h = SpMix(h, (DWORD)mode);
+    h = SpMix(h, id0);
+    h = SpMix(h, id1);
+    h = SpMix(h, sc[2]);
+    h = SpMix(h, sc[3]);
+    h = SpMix(h, sc[4]);
+    h = SpMix(h, (DWORD)chance);
+    h = SpMix(h, (DWORD)rnd);
+    g_evHash = h;
+    ++g_evRolls;
+
+    DWORD key = (id0 * 2654435761u) ^ (id1 * 40503u) ^ ((DWORD)mode * 97u);
+    EvEntry* e = 0;
+    for (int p = 0; p < 64; ++p)
+    {
+        EvEntry* c = &g_evTab[(key + (DWORD)p) & (EV_SLOTS - 1)];
+        if (!c->used)
+        {
+            c->used = 1;
+            c->mode = (DWORD)mode;
+            c->id0 = id0;
+            c->id1 = id1;
+            e = c;
+            break;
+        }
+        if (c->mode == (DWORD)mode && c->id0 == id0 && c->id1 == id1)
+        {
+            e = c;
+            break;
+        }
+    }
+    if (!e)
+    {
+        ++g_evDropped;
+        return;
+    }
+    ++e->rolls;
+    if (e->nScopes < 6)
+    {
+        for (int i = 0; i < 5; ++i)
+            e->scopes[e->nScopes][i] = sc[i];
+        ++e->nScopes;
+    }
+    if (fire)
+    {
+        ++e->fired;
+        if (g_evFiredN < 512)
+        {
+            EvFiredRec& r = g_evFired[g_evFiredN];
+            r.mode = (DWORD)mode;
+            r.id0 = id0;
+            r.id1 = id1;
+            for (int i = 0; i < 5; ++i)
+                r.sc[i] = sc[i];
+            r.chance = (DWORD)chance;
+            r.rnd = (DWORD)rnd;
+            r.hum = (mode == 1) ? CountryHumanFlag((int)sc[4]) : -1;
+        }
+        ++g_evFiredN;
+    }
+}
+
+static int EvEntryOrder(const void* a, const void* b)
+{
+    const EvEntry* x = *(const EvEntry* const*)a;
+    const EvEntry* y = *(const EvEntry* const*)b;
+    if (x->mode != y->mode) return x->mode < y->mode ? -1 : 1;
+    if (x->id0 != y->id0) return x->id0 < y->id0 ? -1 : 1;
+    if (x->id1 != y->id1) return x->id1 < y->id1 ? -1 : 1;
+    return 0;
+}
+
+static void EventRollFlushDay(void* sessionV)
+{
+    if (!g_evProbeOn || !sessionV)
+        return;
+
+    char dateBuf[32];
+    dateBuf[0] = 0;
+    __try
+    {
+        int raw = *(int*)((char*)sessionV + OOS_DATE_OFF);
+        FormatVic2Date(raw, dateBuf, sizeof(dateBuf));
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        strcpy_s(dateBuf, "?");
+    }
+
+    static EvEntry* ptrs[EV_SLOTS];
+    int n = 0;
+    for (int i = 0; i < EV_SLOTS; ++i)
+        if (g_evTab[i].used)
+            ptrs[n++] = &g_evTab[i];
+    qsort(ptrs, (size_t)n, sizeof(ptrs[0]), EvEntryOrder);
+
+    int pos = _snprintf_s(g_evLine, sizeof(g_evLine), _TRUNCATE,
+        "E date=%s rolls=%u fired=%u h=%08X drop=%u |",
+        dateBuf, g_evRolls, g_evFiredN, g_evHash, g_evDropped);
+    for (int i = 0; i < n && pos > 0 && pos < (int)sizeof(g_evLine) - 400; ++i)
+    {
+        EvEntry* e = ptrs[i];
+        int k = _snprintf_s(g_evLine + pos, sizeof(g_evLine) - pos, _TRUNCATE,
+            " %u%X.%X=%u/%u", e->mode, e->id0, e->id1, e->rolls, e->fired);
+        if (k <= 0)
+            break;
+        pos += k;
+        if (e->rolls <= 4 && e->rolls == e->nScopes)
+        {
+            g_evLine[pos++] = ':';
+            for (DWORD j = 0; j < e->nScopes && pos < (int)sizeof(g_evLine) - 120; ++j)
+            {
+                int k2 = _snprintf_s(g_evLine + pos, sizeof(g_evLine) - pos, _TRUNCATE,
+                    "%s%X.%X.%X.%X.%X", j ? "," : "", e->scopes[j][0], e->scopes[j][1], e->scopes[j][2], e->scopes[j][3], e->scopes[j][4]);
+                if (k2 <= 0)
+                    break;
+                pos += k2;
+            }
+        }
+    }
+    LogRngFile("%s", g_evLine);
+
+    DWORD nf = g_evFiredN < 512 ? g_evFiredN : 512;
+    for (DWORD i = 0; i < nf; ++i)
+    {
+        EvFiredRec& r = g_evFired[i];
+        LogRngFile("F date=%s %u%X.%X scope=%X.%X.%X.%X.%X chance=%u rand=%u hum=%d",
+            dateBuf, r.mode, r.id0, r.id1, r.sc[0], r.sc[1], r.sc[2], r.sc[3], r.sc[4], r.chance, r.rnd, r.hum);
+    }
+
+    memset(g_evTab, 0, sizeof(g_evTab));
+    g_evRolls = 0;
+    g_evFiredN = 0;
+    g_evDropped = 0;
+    g_evHash = 2166136261u;
+}
+
+__declspec(naked) static void EventRollThunk1()
+{
+    __asm {
+        pushfd
+        pushad
+        mov eax, dword ptr [esp + 0x10]
+        mov ebx, dword ptr [esp + 4]
+        mov ecx, dword ptr [esp + 0x4C]
+        lea edx, [esp + 0x64]
+        mov edi, dword ptr [esp + 0x44]
+        push edi
+        push 1
+        push ecx
+        push ebx
+        push edx
+        push eax
+        call EventRollNote
+        add esp, 24
+        popad
+        popfd
+        cmp esi, dword ptr [esp + 0x28]
+        jl do_resume
+        jmp dword ptr [g_evSkip1]
+    do_resume:
+        jmp dword ptr [g_evResume1]
+    }
+}
+
+__declspec(naked) static void EventRollThunk2()
+{
+    __asm {
+        pushfd
+        pushad
+        mov eax, dword ptr [esp + 0x10]
+        mov ebx, dword ptr [esp + 4]
+        mov ecx, dword ptr [esp + 0x54]
+        lea edx, [esp + 0x64]
+        mov edi, dword ptr [esp + 0x3C]
+        push edi
+        push 2
+        push ecx
+        push ebx
+        push edx
+        push eax
+        call EventRollNote
+        add esp, 24
+        popad
+        popfd
+        cmp esi, dword ptr [esp + 0x30]
+        jl do_resume2
+        jmp dword ptr [g_evSkip2]
+    do_resume2:
+        jmp dword ptr [g_evResume2]
+    }
+}
+
+static bool PatchEvRollSite(DWORD rva, const unsigned char* sig, void* thunk)
+{
+    unsigned char* p = (unsigned char*)(g_base + rva);
+    if (memcmp(p, sig, 6) != 0)
+    {
+        Log("EventRollProbe: сигнатура не совпала rva %06X (%02X %02X %02X %02X %02X %02X)",
+            rva, p[0], p[1], p[2], p[3], p[4], p[5]);
+        return false;
+    }
+    unsigned char patch[6];
+    patch[0] = 0xE9;
+    *(DWORD*)(patch + 1) = (DWORD)(DWORD_PTR)thunk - ((DWORD)(DWORD_PTR)p + 5);
+    patch[5] = 0x90;
+    DWORD old = 0;
+    if (!VirtualProtect(p, 6, PAGE_EXECUTE_READWRITE, &old))
+        return false;
+    memcpy(p, patch, 6);
+    VirtualProtect(p, 6, old, &old);
+    FlushInstructionCache(GetCurrentProcess(), p, 6);
+    return true;
+}
+
+static bool InstallEventRollProbe()
+{
+    if (!g_settings.enableRngProbe)
+        return false;
+    g_evSkip1 = g_base + 0x4A7EF9;
+    g_evResume1 = g_base + 0x4A7EB7;
+    g_evSkip2 = g_base + 0x4A80DA;
+    g_evResume2 = g_base + 0x4A8098;
+    bool ok1 = PatchEvRollSite(RVA_EV_ROLL_1, EV_ROLL_SIG_1, (void*)&EventRollThunk1);
+    bool ok2 = PatchEvRollSite(RVA_EV_ROLL_2, EV_ROLL_SIG_2, (void*)&EventRollThunk2);
+    g_evProbeOn = ok1 && ok2;
+    Log("EventRollProbe: установлен (страны rva %06X=%d, провинции rva %06X=%d); пишет строки E/F в Logs\\v2dll_rng.log",
+        RVA_EV_ROLL_1, (int)ok1, RVA_EV_ROLL_2, (int)ok2);
+    return g_evProbeOn;
+}
+
+// ---------------------------------------------------------------
+// Tick probe (5.64, часть ENABLE_RNG_PROBE).
+//
+// Логи 5.63 показали: на клиентах всё побитно одинаково, а счётчик Random() полностью
+// раскладывается на n (обёртки) + rolls (броски MTTH событий) + 1000 (пул дневного тика),
+// так что отличается только хост (на нём +2 розыгрыша). Чтобы не гадать, каждая машина
+// теперь пишет в Logs\v2dll_rng.log строку
+//   T date= mtidx= mth= nhum= hum=<TAG,TAG,...>
+// mtidx/mth - индекс и хеш 624 слов глобального Mersenne Twister (DAT_00F0ECF0), т.е.
+// состояние ГСЧ с учётом ВСЕХ розыгрышей, в том числе тех, что счётчик не считает (AI-выбор
+// опции события в FUN_008A8120 зовёт ядро FUN_009B7610 напрямую). hum - страны, для которых
+// вектор session+0xAEC (индекс страны -> игрок, 0 = ИИ) не пуст, т.е. кого эта машина считает
+// человеком: от него зависит, пойдёт ли событие по ветке ИИ (авто-выбор опции, розыгрыш) или
+// по ветке игрока (окно, розыгрыша нет) и сработают ли триггеры "ai = yes".
+// Список людей и при первом тике, и при каждом изменении дублируется в v2dll.log.
+// ---------------------------------------------------------------
+
+static const DWORD RVA_MT_STATE  = 0xB0ECF0;   // VA 0xF0ECF0: 624 слов, индекс сразу за ними (+0x9C0)
+static const int   MT_STATE_WORDS = 624;
+static const int   SP_SESSION_HUMANS = 0xAEC;  // vector<int> по индексу страны, !=0 -> человек
+static const DWORD RVA_SESSION_PTR = 0xE588E8; // VA 0x12588E8: глобальный указатель на сессию
+static char g_tickHumLast[1024];
+static int g_tickHumLogs = 0;
+
+static int CountryHumanFlag(int idx)
+{
+    __try
+    {
+        char* session = *(char**)(g_base + RVA_SESSION_PTR);
+        if (!session || idx < 0)
+            return -1;
+        char* hb = *(char**)(session + SP_SESSION_HUMANS);
+        char* he = *(char**)(session + SP_SESSION_HUMANS + 4);
+        if (!hb || he < hb || idx >= (int)((he - hb) / 4))
+            return -1;
+        return *(int*)(hb + idx * 4) != 0 ? 1 : 0;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return -1;
+    }
+}
+
+// ---------------------------------------------------------------
+// Отпечаток файлов игры и машины (5.67) - чтобы не просить игроков ничего запускать.
+//
+// В логах 5.64 хост (Ryzen 7 5800X, 16 потоков) и 5 клиентов расходятся в СОСТОЯНИИ
+// экономики уже на втором дне, хотя ini/defines/production_types и список патчей
+// одинаковы. Лобби не сверяет файлы мода, а ConfigFingerprint хэширует из них только
+// production_types.txt. Поэтому на первом дневном тике (отдельный поток, низкий приоритет)
+// DLL сама обходит папку игры и пишет:
+//   Logs\v2dll_files.txt   # info-строки (процессор, ОС, x87/SSE), по строке на файл
+//                          <относительный путь>TAB<размер>TAB<FNV-1a 64>, в конце @dir-строки
+//                          с суммарным хэшем по каталогам;
+//   v2dll.log              итог и строки "ModFingerprint dir ..." по каталогам.
+// Берутся *.txt *.csv *.lua *.gui *.gfx *.mod *.ini *.conf *.asset *.sfx *.yml везде и
+// *.exe *.dll в корне; пропускаются Logs, cache, Screenshots, save games. Сравнение машин:
+// Patches\compare_modhash.py host\v2dll_files.txt client\v2dll_files.txt ...
+// ---------------------------------------------------------------
+
+struct FpBuf
+{
+    char* p;
+    size_t n;
+    size_t cap;
+};
+
+struct FpDir
+{
+    char name[96];
+    unsigned long long h;
+    unsigned long long bytes;
+    int files;
+};
+
+static FpDir g_fpDirs[128];
+static int g_fpDirN = 0;
+static unsigned long long g_fpTotalBytes = 0;
+static int g_fpTotalFiles = 0;
+static LONG g_modFpState = 0;
+static wchar_t g_filesLogFile[MAX_PATH];
+
+static void FpPut(FpBuf* b, const char* fmt, ...)
+{
+    char tmp[2048];
+    va_list ap;
+    va_start(ap, fmt);
+    int k = _vsnprintf_s(tmp, sizeof(tmp), _TRUNCATE, fmt, ap);
+    va_end(ap);
+    if (k <= 0)
+        return;
+    if (b->n + (size_t)k + 1 > b->cap)
+    {
+        size_t nc = b->cap ? b->cap * 2 : 512 * 1024;
+        while (nc < b->n + (size_t)k + 1)
+            nc *= 2;
+        char* np = (char*)realloc(b->p, nc);
+        if (!np)
+            return;
+        b->p = np;
+        b->cap = nc;
+    }
+    memcpy(b->p + b->n, tmp, (size_t)k);
+    b->n += (size_t)k;
+    b->p[b->n] = 0;
+}
+
+static unsigned long long FpFnv(const unsigned char* p, size_t n, unsigned long long h)
+{
+    for (size_t i = 0; i < n; ++i)
+    {
+        h ^= p[i];
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
+
+static FpDir* FpDirFor(const char* name)
+{
+    for (int i = 0; i < g_fpDirN; ++i)
+        if (strcmp(g_fpDirs[i].name, name) == 0)
+            return &g_fpDirs[i];
+    if (g_fpDirN >= (int)(sizeof(g_fpDirs) / sizeof(g_fpDirs[0])))
+        return &g_fpDirs[g_fpDirN - 1];
+    FpDir* d = &g_fpDirs[g_fpDirN++];
+    strcpy_s(d->name, name);
+    d->h = 0;
+    d->bytes = 0;
+    d->files = 0;
+    return d;
+}
+
+// ключ каталога для сводного хэша: mod\<имя>\<подкаталог>, history\<подкаталог>, иначе первый каталог
+static void FpDirKey(const char* rel, char* key, size_t keySize)
+{
+    char comps[4][64];
+    int nc = 0;
+    const char* s0 = rel;
+    while (nc < 4)
+    {
+        const char* sl = strchr(s0, '\\');
+        if (!sl)
+            break;
+        size_t len = (size_t)(sl - s0);
+        if (len >= sizeof(comps[0]))
+            len = sizeof(comps[0]) - 1;
+        memcpy(comps[nc], s0, len);
+        comps[nc][len] = 0;
+        ++nc;
+        s0 = sl + 1;
+    }
+    if (nc == 0)
+    {
+        strcpy_s(key, keySize, "<root>");
+        return;
+    }
+    int take = 1;
+    if (_stricmp(comps[0], "mod") == 0)
+        take = 3;
+    else if (_stricmp(comps[0], "history") == 0 || _stricmp(comps[0], "map") == 0)
+        take = 2;
+    if (take > nc)
+        take = nc;
+    key[0] = 0;
+    for (int i = 0; i < take; ++i)
+    {
+        if (i)
+            strcat_s(key, keySize, "\\");
+        strcat_s(key, keySize, comps[i]);
+    }
+}
+
+static bool FpWantFile(const wchar_t* name, bool atRoot)
+{
+    const wchar_t* dot = wcsrchr(name, L'.');
+    if (!dot)
+        return false;
+    static const wchar_t* data[] = { L".txt", L".csv", L".lua", L".gui", L".gfx", L".mod", L".ini",
+                                     L".conf", L".asset", L".sfx", L".yml" };
+    for (int i = 0; i < (int)(sizeof(data) / sizeof(data[0])); ++i)
+        if (_wcsicmp(dot, data[i]) == 0)
+            return true;
+    if (atRoot && (_wcsicmp(dot, L".exe") == 0 || _wcsicmp(dot, L".dll") == 0))
+        return true;
+    return false;
+}
+
+static void FpWalk(const wchar_t* rootDir, size_t rootLen, const wchar_t* dir, FpBuf* out, int depth,
+    unsigned char* chunk)
+{
+    wchar_t pat[1100];
+    swprintf_s(pat, L"%s\\*", dir);
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileExW(pat, FindExInfoBasic, &fd, FindExSearchNameMatch, 0, FIND_FIRST_EX_LARGE_FETCH);
+    if (h == INVALID_HANDLE_VALUE)
+        return;
+    do
+    {
+        if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0)
+            continue;
+        wchar_t full[1100];
+        swprintf_s(full, L"%s\\%s", dir, fd.cFileName);
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+        {
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)
+                continue;
+            if (depth == 0 && (_wcsicmp(fd.cFileName, L"Logs") == 0 || _wcsicmp(fd.cFileName, L"cache") == 0 ||
+                               _wcsicmp(fd.cFileName, L"Screenshots") == 0 ||
+                               _wcsicmp(fd.cFileName, L"save games") == 0))
+                continue;
+            if (depth < 12)
+                FpWalk(rootDir, rootLen, full, out, depth + 1, chunk);
+            continue;
+        }
+        if (!FpWantFile(fd.cFileName, depth == 0))
+            continue;
+
+        // относительный путь в UTF-8
+        char rel[1200];
+        rel[0] = 0;
+        WideCharToMultiByte(CP_UTF8, 0, full + rootLen + 1, -1, rel, (int)sizeof(rel) - 1, 0, 0);
+        rel[sizeof(rel) - 1] = 0;
+
+        unsigned long long size = ((unsigned long long)fd.nFileSizeHigh << 32) | fd.nFileSizeLow;
+        unsigned long long hash = 14695981039346656037ULL;
+        bool ok = false;
+        if (size <= 512ULL * 1024 * 1024)
+        {
+            HANDLE f = CreateFileW(full, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, 0,
+                OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, 0);
+            if (f != INVALID_HANDLE_VALUE)
+            {
+                ok = true;
+                for (;;)
+                {
+                    DWORD got = 0;
+                    if (!ReadFile(f, chunk, 128 * 1024, &got, 0) || got == 0)
+                        break;
+                    hash = FpFnv(chunk, got, hash);
+                }
+                CloseHandle(f);
+            }
+        }
+        FpPut(out, "%s\t%llu\t%016llX\n", rel, size, ok ? hash : 0ULL);
+
+        // сводка по каталогу: порядок обхода не важен (сумма)
+        char key[96];
+        FpDirKey(rel, key, sizeof(key));
+        char low[1200];
+        strcpy_s(low, rel);
+        _strlwr_s(low);
+        unsigned long long ph = FpFnv((const unsigned char*)low, strlen(low), 14695981039346656037ULL);
+        bool volatileFile = (depth == 0 && (_wcsicmp(fd.cFileName, L"settings.txt") == 0 ||
+                                            _wcsicmp(fd.cFileName, L"v2dll_settings.ini") == 0));
+        if (!volatileFile)
+        {
+            FpDir* d = FpDirFor(key);
+            d->h += (ph * 1099511628211ULL) ^ hash ^ (hash >> 29) ^ (size * 11400714819323198485ULL);
+            d->bytes += size;
+            d->files++;
+        }
+        g_fpTotalBytes += size;
+        g_fpTotalFiles++;
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+}
+
+static DWORD WINAPI ModFingerprintThread(LPVOID)
+{
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+    DWORD t0 = GetTickCount();
+
+    wchar_t exe[MAX_PATH];
+    exe[0] = 0;
+    DWORD n = GetModuleFileNameW(NULL, exe, MAX_PATH);
+    wchar_t* slash = (n && n < MAX_PATH) ? wcsrchr(exe, L'\\') : 0;
+    if (!slash)
+        return 0;
+    *slash = 0;
+
+    FpBuf info = { 0, 0, 0 };
+    FpBuf files = { 0, 0, 0 };
+
+    // машина
+    int r[4] = { 0, 0, 0, 0 };
+    __cpuid(r, 0);
+    char vendor[16];
+    memcpy(vendor, &r[1], 4);
+    memcpy(vendor + 4, &r[3], 4);
+    memcpy(vendor + 8, &r[2], 4);
+    vendor[12] = 0;
+    int maxLeaf = r[0];
+    char brand[64];
+    memset(brand, 0, sizeof(brand));
+    __cpuid(r, (int)0x80000000);
+    if ((unsigned)r[0] >= 0x80000004u)
+    {
+        for (int i = 0; i < 3; ++i)
+        {
+            __cpuid(r, (int)(0x80000002u + i));
+            memcpy(brand + i * 16, r, 16);
+        }
+    }
+    int f1[4] = { 0, 0, 0, 0 };
+    int f7[4] = { 0, 0, 0, 0 };
+    if (maxLeaf >= 1)
+        __cpuid(f1, 1);
+    if (maxLeaf >= 7)
+        __cpuidex(f7, 7, 0);
+    SYSTEM_INFO si;
+    GetSystemInfo(&si);
+
+    typedef LONG(WINAPI * RtlGetVersionFn)(OSVERSIONINFOW*);
+    OSVERSIONINFOW ov;
+    memset(&ov, 0, sizeof(ov));
+    ov.dwOSVersionInfoSize = sizeof(ov);
+    HMODULE nt = GetModuleHandleW(L"ntdll.dll");
+    RtlGetVersionFn rgv = nt ? (RtlGetVersionFn)GetProcAddress(nt, "RtlGetVersion") : 0;
+    if (rgv)
+        rgv(&ov);
+
+    char exeUtf8[600];
+    exeUtf8[0] = 0;
+    WideCharToMultiByte(CP_UTF8, 0, exe, -1, exeUtf8, (int)sizeof(exeUtf8) - 1, 0, 0);
+    char comp[64];
+    comp[0] = 0;
+    DWORD cn = (DWORD)sizeof(comp);
+    GetComputerNameA(comp, &cn);
+
+    FpPut(&info, "# dll: %s\n", MOD_VERSION);
+    FpPut(&info, "# host: %s\n", comp);
+    FpPut(&info, "# root: %s\n", exeUtf8);
+    FpPut(&info, "# cpu: %s | vendor=%s family=%d model=%d stepping=%d logical=%u\n", brand, vendor,
+        ((f1[0] >> 8) & 0xF) + ((f1[0] >> 20) & 0xFF), ((f1[0] >> 4) & 0xF) | ((f1[0] >> 12) & 0xF0),
+        f1[0] & 0xF, (unsigned)si.dwNumberOfProcessors);
+    FpPut(&info, "# cpuid: leaf1 ecx=%08X edx=%08X leaf7 ebx=%08X ecx=%08X\n", (unsigned)f1[2], (unsigned)f1[3],
+        (unsigned)f7[1], (unsigned)f7[2]);
+    FpPut(&info, "# os: windows %lu.%lu build %lu\n", ov.dwMajorVersion, ov.dwMinorVersion, ov.dwBuildNumber);
+
+    static unsigned char chunk[128 * 1024];
+    FpWalk(exe, wcslen(exe), exe, &files, 0, chunk);
+
+    FpBuf dirs = { 0, 0, 0 };
+    unsigned long long total = 0;
+    for (int i = 0; i < g_fpDirN; ++i)
+    {
+        FpPut(&dirs, "@dir\t%s\t%d\t%llu\t%016llX\n", g_fpDirs[i].name, g_fpDirs[i].files, g_fpDirs[i].bytes,
+            g_fpDirs[i].h);
+        total += g_fpDirs[i].h;
+    }
+    FpPut(&info, "# files: %d, %llu bytes, combined %016llX, %lu ms\n", g_fpTotalFiles, g_fpTotalBytes, total,
+        (unsigned long)(GetTickCount() - t0));
+
+    InitLogDir();
+    swprintf_s(g_filesLogFile, L"%s\\v2dll_files.txt", g_logsDir);
+    RotateLogOnce(g_filesLogFile);
+    FILE* f = 0;
+    if (_wfopen_s(&f, g_filesLogFile, L"wb") == 0 && f)
+    {
+        if (info.p)
+            fwrite(info.p, 1, info.n, f);
+        if (files.p)
+            fwrite(files.p, 1, files.n, f);
+        if (dirs.p)
+            fwrite(dirs.p, 1, dirs.n, f);
+        fclose(f);
+    }
+
+    Log("ModFingerprint: %s (%s) %s логических %u; файлов %d, %llu байт, общий %016llX, %lu мс -> Logs\\v2dll_files.txt",
+        brand, vendor, MOD_VERSION, (unsigned)si.dwNumberOfProcessors, g_fpTotalFiles, g_fpTotalBytes, total,
+        (unsigned long)(GetTickCount() - t0));
+    for (int i = 0; i < g_fpDirN; ++i)
+        Log("ModFingerprint dir %-28s файлов %5d, %10llu байт, %016llX", g_fpDirs[i].name, g_fpDirs[i].files,
+            g_fpDirs[i].bytes, g_fpDirs[i].h);
+
+    free(info.p);
+    free(files.p);
+    free(dirs.p);
+    return 0;
+}
+
+static void StartModFingerprint()
+{
+    if (InterlockedCompareExchange(&g_modFpState, 1, 0) != 0)
+        return;
+    HANDLE t = CreateThread(0, 0, ModFingerprintThread, 0, 0, 0);
+    if (t)
+        CloseHandle(t);
+}
+
+// ---------------------------------------------------------------
+// Money watch (5.69): аппаратная точка останова на запись в казну страны.
+//
+// Логи 5.68: единственное, чем хост отличается от клиентов, - КУДА и СКОЛЬКО уходит казна
+// ИИ-страны KUK. На одном и том же тике хост перевёл в сбережения штата #25 ВСЮ казну
+// (93399, money=0), а клиенты 70% (65338, осталось 28061). Какая функция переводит - неизвестно
+// (запись money +0xE78 встречается в десятках мест), поэтому следим за самим полем:
+// DR0..DR3 = младшее DWORD казны (+0xE78) стран из g_mwTags, на ВСЕХ потоках процесса
+// (дневной тик и параллельный цикл стран идут на разных потоках). Ловушка срабатывает ПОСЛЕ
+// записи; VEH пишет в буфер eip (после инструкции), до 5 адресов возврата из стека и новое
+// значение. Раз в день на входе тика буфер уходит в Logs\v2dll_watch.log:
+//   W date=<дата> TAG=<TAG> n=<записей> | eip.ret1.ret2... =<младшее DWORD после записи>
+// Сравнение хоста и клиента: Patches\compare_watch_logs.py (первая отличающаяся запись дня).
+// ---------------------------------------------------------------
+
+static const char* g_mwTags[] = { "KUK" };
+static const int MW_MAX = 4;
+static const int MW_BUF = 6144;
+struct MwEntry
+{
+    DWORD slot;
+    DWORD eip;
+    DWORD ret[5];
+    DWORD val;
+    DWORD valHi;
+};
+static MwEntry g_mwBuf[MW_BUF];
+static volatile LONG g_mwN = 0;
+static volatile LONG g_mwDropped = 0;
+static volatile LONG g_mwState = 0;   // 0 - не запущен, 1 - запускается, 2 - работает, 3 - ошибка
+static char* g_mwAddr[MW_MAX];
+static char g_mwName[MW_MAX][8];
+static int g_mwCount = 0;
+static DWORD g_mwTextLo = 0, g_mwTextHi = 0;
+static wchar_t g_watchLogFile[MAX_PATH];
+static bool g_watchLogStarted = false;
+
+static bool MwIsRet(DWORD v)
+{
+    if (v < g_mwTextLo || v >= g_mwTextHi)
+        return false;
+    __try
+    {
+        const unsigned char* p = (const unsigned char*)v;
+        if (p[-5] == 0xE8)
+            return true;
+        if (p[-2] == 0xFF && ((p[-1] >> 3) & 7) == 2)
+            return true;
+        if (p[-3] == 0xFF && ((p[-2] >> 3) & 7) == 2)
+            return true;
+        if (p[-6] == 0xFF && ((p[-5] >> 3) & 7) == 2)
+            return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+    }
+    return false;
+}
+
+static LONG CALLBACK MoneyWatchVeh(EXCEPTION_POINTERS* ep)
+{
+    if (ep->ExceptionRecord->ExceptionCode != EXCEPTION_SINGLE_STEP)
+        return EXCEPTION_CONTINUE_SEARCH;
+    CONTEXT* c = ep->ContextRecord;
+    DWORD dr6 = c->Dr6;
+    if ((dr6 & 0xF) == 0 || g_mwState != 2)
+        return EXCEPTION_CONTINUE_SEARCH;
+    for (int i = 0; i < MW_MAX; ++i)
+    {
+        if (!(dr6 & (1u << i)) || i >= g_mwCount)
+            continue;
+        LONG n = InterlockedIncrement(&g_mwN) - 1;
+        if (n >= MW_BUF)
+        {
+            InterlockedIncrement(&g_mwDropped);
+            continue;
+        }
+        MwEntry* e = &g_mwBuf[n];
+        e->slot = (DWORD)i;
+        e->eip = c->Eip - (DWORD)g_base;
+        memset(e->ret, 0, sizeof(e->ret));
+        int k = 0;
+        __try
+        {
+            const DWORD* sp = (const DWORD*)c->Esp;
+            for (int w = 0; w < 160 && k < 5; ++w)
+            {
+                DWORD v = sp[w];
+                if (MwIsRet(v))
+                    e->ret[k++] = v - (DWORD)g_base;
+            }
+            e->val = *(const DWORD*)g_mwAddr[i];
+            e->valHi = *(const DWORD*)(g_mwAddr[i] + 4);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+        }
+    }
+    c->Dr6 = 0;
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+
+static void MwSetDebugRegs(DWORD tid)
+{
+    HANDLE h = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_SET_CONTEXT, FALSE, tid);
+    if (!h)
+        return;
+    if (SuspendThread(h) != (DWORD)-1)
+    {
+        CONTEXT c;
+        memset(&c, 0, sizeof(c));
+        c.ContextFlags = CONTEXT_DEBUG_REGISTERS;
+        if (GetThreadContext(h, &c))
+        {
+            DWORD dr7 = 0;
+            DWORD* dr[4] = { &c.Dr0, &c.Dr1, &c.Dr2, &c.Dr3 };
+            for (int i = 0; i < g_mwCount && i < 4; ++i)
+            {
+                *dr[i] = (DWORD)(DWORD_PTR)g_mwAddr[i];
+                dr7 |= (1u << (i * 2)) | (1u << (16 + i * 4)) | (3u << (18 + i * 4));   // локально, запись, 4 байта
+            }
+            c.Dr7 = dr7;
+            c.Dr6 = 0;
+            SetThreadContext(h, &c);
+        }
+        ResumeThread(h);
+    }
+    CloseHandle(h);
+}
+
+static DWORD WINAPI MoneyWatchThread(LPVOID)
+{
+    DWORD me = GetCurrentThreadId();
+    DWORD pid = GetCurrentProcessId();
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    int set = 0;
+    if (snap != INVALID_HANDLE_VALUE)
+    {
+        THREADENTRY32 te;
+        te.dwSize = sizeof(te);
+        if (Thread32First(snap, &te))
+        {
+            do
+            {
+                if (te.th32OwnerProcessID == pid && te.th32ThreadID != me)
+                {
+                    MwSetDebugRegs(te.th32ThreadID);
+                    ++set;
+                }
+            } while (Thread32Next(snap, &te));
+        }
+        CloseHandle(snap);
+    }
+    Log("MoneyWatch: точки останова на запись казны (%d стран) поставлены на %d потоков", g_mwCount, set);
+    return 0;
+}
+
+static void MoneyWatchStart(char* session)
+{
+    if (InterlockedCompareExchange(&g_mwState, 1, 0) != 0)
+        return;
+    __try
+    {
+        PIMAGE_DOS_HEADER dos = (PIMAGE_DOS_HEADER)g_base;
+        PIMAGE_NT_HEADERS nt = (PIMAGE_NT_HEADERS)((char*)g_base + dos->e_lfanew);
+        PIMAGE_SECTION_HEADER sec = IMAGE_FIRST_SECTION(nt);
+        g_mwTextLo = (DWORD)g_base + sec->VirtualAddress;
+        g_mwTextHi = g_mwTextLo + sec->Misc.VirtualSize;
+
+        char* cb = *(char**)(session + SP_SESSION_COUNTRIES);
+        char* ce = *(char**)(session + SP_SESSION_COUNTRIES + 4);
+        int nc = (cb && ce >= cb) ? (int)((ce - cb) / 4) : 0;
+        // Теги из ini (MONEY_WATCH_TAGS) или g_mwTags по умолчанию.
+        const char* mwSrc = g_settings.mwTags[0] ? g_settings.mwTags : g_mwTags[0];
+        static char mwTagStore[MW_MAX][4];
+        const char* mwList[MW_MAX];
+        int nTags = 0;
+        for (const char* p = mwSrc; *p && nTags < MW_MAX; )
+        {
+            while (*p == ',' || *p == ';' || *p == ' ' || *p == '\t')
+                ++p;
+            if (!*p)
+                break;
+            int k = 0;
+            while (p[k] && p[k] != ',' && p[k] != ';' && p[k] != ' ' && p[k] != '\t')
+                ++k;
+            if (k == 3)
+            {
+                for (int j = 0; j < 3; ++j)
+                    mwTagStore[nTags][j] = (char)toupper((unsigned char)p[j]);
+                mwTagStore[nTags][3] = 0;
+                mwList[nTags] = mwTagStore[nTags];
+                ++nTags;
+            }
+            p += k;
+        }
+        Log("MoneyWatch: теги из '%s': разобрано %d (лимит %d)", mwSrc, nTags, MW_MAX);
+        for (int t = 0; t < nTags && g_mwCount < MW_MAX; ++t)
+        {
+            for (int i = 0; i < nc; ++i)
+            {
+                char* c = *(char**)(cb + i * 4);
+                if (c && c[0x1C] == mwList[t][0] && c[0x1D] == mwList[t][1] && c[0x1E] == mwList[t][2])
+                {
+                    g_mwAddr[g_mwCount] = c + SP_COUNTRY_MONEY;
+                    strcpy_s(g_mwName[g_mwCount], mwList[t]);
+                    ++g_mwCount;
+                    break;
+                }
+            }
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        g_mwCount = 0;
+    }
+    if (g_mwCount == 0)
+    {
+        g_mwState = 3;
+        Log("MoneyWatch: страны для наблюдения не найдены");
+        return;
+    }
+    AddVectoredExceptionHandler(1, MoneyWatchVeh);
+    g_mwState = 2;
+    HANDLE t = CreateThread(0, 0, MoneyWatchThread, 0, 0, 0);
+    if (t)
+        CloseHandle(t);
+}
+
+static void MoneyWatchFlushDay(const char* dateBuf)
+{
+    if (g_mwState != 2)
+        return;
+    LONG n = g_mwN;
+    LONG dropped = g_mwDropped;
+    if (n > MW_BUF)
+        n = MW_BUF;
+    if (!g_watchLogFile[0])
+    {
+        InitLogDir();
+        swprintf_s(g_watchLogFile, L"%s\\v2dll_watch.log", g_logsDir);
+    }
+    static char line[4096];
+    int pos = _snprintf_s(line, sizeof(line), _TRUNCATE, "W date=%s writes=%ld dropped=%ld", dateBuf, (long)n,
+        (long)dropped);
+    // одна страна за раз обрабатывается одним потоком, так что порядок записей одной страны
+    // за день воспроизводим; копируем буфер и сразу освобождаем его для следующего дня
+    static MwEntry sorted[MW_BUF];
+    memcpy(sorted, g_mwBuf, (size_t)n * sizeof(MwEntry));
+    LONG cnt = n;
+    InterlockedExchange(&g_mwN, 0);
+    InterlockedExchange(&g_mwDropped, 0);
+
+    FILE* f = 0;
+    bool first = !g_watchLogStarted;
+    if (first)
+        RotateLogOnce(g_watchLogFile);
+    if (_wfopen_s(&f, g_watchLogFile, first ? L"w" : L"a") != 0 || !f)
+        return;
+    g_watchLogStarted = true;
+    fprintf(f, "%s\n", line);
+    for (LONG i = 0; i < cnt; ++i)
+    {
+        const MwEntry& e = sorted[i];
+        fprintf(f, "  %s %06X.%06X.%06X.%06X lo=%08X hi=%08X\n", g_mwName[e.slot < (DWORD)MW_MAX ? e.slot : 0],
+            e.eip, e.ret[0], e.ret[1], e.ret[2], e.val, e.valHi);
+    }
+    fclose(f);
+}
+
+static void TickProbeFlushDay(void* sessionV)
+{
+    if (!g_settings.enableRngProbe || !sessionV)
+        return;
+    char* session = (char*)sessionV;
+
+    char dateBuf[32];
+    dateBuf[0] = 0;
+    __try
+    {
+        int raw = *(int*)(session + OOS_DATE_OFF);
+        FormatVic2Date(raw, dateBuf, sizeof(dateBuf));
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        strcpy_s(dateBuf, "?");
+    }
+
+    DWORD mth = 2166136261u;
+    DWORD mtidx = 0xFFFFFFFFu;
+    __try
+    {
+        const DWORD* st = (const DWORD*)(g_base + RVA_MT_STATE);
+        for (int i = 0; i < MT_STATE_WORDS; ++i)
+            mth = SpMix(mth, st[i]);
+        mtidx = st[MT_STATE_WORDS];                    // +0x9C0 байт = слово 624
+        mth = SpMix(mth, mtidx);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        mtidx = 0xFFFFFFFFu;
+    }
+
+    char hum[1024];
+    int hp = 0;
+    int nhum = 0;
+    hum[0] = 0;
+    __try
+    {
+        char* hb = *(char**)(session + SP_SESSION_HUMANS);
+        char* he = *(char**)(session + SP_SESSION_HUMANS + 4);
+        char* cb = *(char**)(session + SP_SESSION_COUNTRIES);
+        char* ce = *(char**)(session + SP_SESSION_COUNTRIES + 4);
+        if (hb && he >= hb && (he - hb) < 4 * 4096)
+        {
+            int n = (int)((he - hb) / 4);
+            int nc = (cb && ce >= cb) ? (int)((ce - cb) / 4) : 0;
+            for (int i = 0; i < n; ++i)
+            {
+                if (*(int*)(hb + i * 4) == 0)
+                    continue;
+                ++nhum;
+                if (hp > (int)sizeof(hum) - 24)
+                    continue;
+                char tag[8] = { 0 };
+                bool ok = false;
+                if (i < nc)
+                {
+                    char* c = *(char**)(cb + i * 4);
+                    if (c)
+                    {
+                        const char* t = c + 0x1C;
+                        ok = true;
+                        for (int k = 0; k < 3; ++k)
+                        {
+                            char ch = t[k];
+                            if (!((ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_'))
+                                ok = false;
+                            tag[k] = ch;
+                        }
+                    }
+                }
+                if (!ok)
+                    _snprintf_s(tag, sizeof(tag), _TRUNCATE, "#%d", i);
+                int k2 = _snprintf_s(hum + hp, sizeof(hum) - hp, _TRUNCATE, "%s%s", hp ? "," : "", tag);
+                if (k2 > 0)
+                    hp += k2;
+            }
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        strcpy_s(hum, "?");
+    }
+
+    // страна ЭТОЙ машины (session+0xB60 - индекс; движок передаёт признак "страна игрока" в
+    // дневной проход экономики FUN_00485E40 и в пул-код попов, там две разные ветки)
+    char me[16];
+    strcpy_s(me, "-");
+    __try
+    {
+        int midx = *(int*)(session + 0xB60);
+        char* cb = *(char**)(session + SP_SESSION_COUNTRIES);
+        char* ce = *(char**)(session + SP_SESSION_COUNTRIES + 4);
+        int nc = (cb && ce >= cb) ? (int)((ce - cb) / 4) : 0;
+        if (midx >= 0 && midx < nc)
+        {
+            char* c = *(char**)(cb + midx * 4);
+            if (c)
+            {
+                char t[4] = { c[0x1C], c[0x1D], c[0x1E], 0 };
+                _snprintf_s(me, sizeof(me), _TRUNCATE, "%s#%d", t, midx);
+            }
+        }
+        else
+            _snprintf_s(me, sizeof(me), _TRUNCATE, "#%d", midx);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        strcpy_s(me, "?");
+    }
+    LogRngFile("T date=%s mtidx=%u mth=%08X nhum=%d hum=%s fcw=%04X mxcsr=%08X me=%s", dateBuf, mtidx, mth, nhum,
+        hum[0] ? hum : "-", (unsigned)_control87(0, 0) & 0xFFFFu, (unsigned)_mm_getcsr(), me);
+    StartModFingerprint();
+    MoneyWatchFlushDay(dateBuf);
+    MoneyWatchStart(session);
+
+    if (strcmp(hum, g_tickHumLast) != 0 && g_tickHumLogs < 40)
+    {
+        ++g_tickHumLogs;
+        strcpy_s(g_tickHumLast, hum);
+        Log("TickProbe: на %s люди (по вектору session+0xAEC): %d [%s]", dateBuf, nhum, hum[0] ? hum : "-");
+    }
 }
 
 // Выбор/ход армии: не single_unitpanel (3.28 panel=0 при реальных кликах).
@@ -22666,6 +24982,158 @@ namespace ParallelEvents
 }
 
 
+// ---------------------------------------------------------------
+// Отпечаток конфигурации (5.61). Рассинхрон MP почти наверняка значит, что
+// у какой-то машины отличается то, что меняет симуляцию, но НЕ входит в
+// проверку лобби: v2dll_settings.ini (у каждого свой), defines_v2dll.txt
+// (создаётся/дописывается DLL на каждой машине), production_types.txt.
+// Счётчик Random() - запаздывающий индикатор: другие деньги/цены не меняют
+// число вызовов, пока какая-нибудь ветка не перевернётся, поэтому OOS может
+// появиться через сотни дней после того, как состояния разошлись.
+// В конце Install пишем в v2dll.log все ключи эффективных настроек
+// ("Cfg KEY=VAL"), нормализованные строки defines_v2dll.txt ("Cfg def ...")
+// и три хэша; те же хэши - в v2dll_oos.log / v2dll_rng.log. Хэши обязаны
+// совпасть у ВСЕХ игроков (включая хоста). Косметические ключи (логи) в
+// хэш не входят, но печатаются. Сравнение: Patches\compare_install_logs.py.
+// ---------------------------------------------------------------
+static DWORD CfgFnv(DWORD h, const char* s, size_t n)
+{
+    for (size_t i = 0; i < n; ++i)
+    {
+        h ^= (unsigned char)s[i];
+        h *= 16777619u;
+    }
+    return h;
+}
+
+static bool CfgKeyCosmetic(const char* key)
+{
+    static const char* const skip[] =
+    {
+        "ENABLE_LOG", "DEBUG_LOG", "ENABLE_CRASH_LOG", "ENABLE_CRASH_DUMP",
+        "ENABLE_OOS_LOG", "ENABLE_RNG_PROBE", "ENABLE_STATE_PROBE",
+        "SP_WINDOW_FROM", "SP_WINDOW_TO", "MONEY_WATCH_TAGS"
+    };
+    for (size_t i = 0; i < sizeof(skip) / sizeof(skip[0]); ++i)
+        if (_stricmp(key, skip[i]) == 0)
+            return true;
+    return false;
+}
+
+static char g_cfgFpLine[160] = "";
+
+static void LogConfigFingerprint()
+{
+    InitLogDir();
+
+    DWORD hCfg = 2166136261u;
+    DWORD hDef = 2166136261u;
+    DWORD hProd = 2166136261u;
+
+    // 1) эффективные настройки: тот же писатель, что создаёт ini по умолчанию,
+    //    но в временный файл - получаем ВСЕ ключи с текущими значениями.
+    wchar_t tmpW[MAX_PATH];
+    char tmp[MAX_PATH];
+    swprintf_s(tmpW, L"%s\\v2dll_cfg_dump.tmp", g_logsDir);
+    if (WideCharToMultiByte(CP_ACP, 0, tmpW, -1, tmp, (int)sizeof(tmp), 0, 0) > 0)
+    {
+        WriteDefaultSettings(tmp);
+        FILE* f = 0;
+        if (fopen_s(&f, tmp, "r") == 0 && f)
+        {
+            char line[512];
+            while (fgets(line, sizeof(line), f))
+            {
+                size_t n = strlen(line);
+                while (n && (line[n - 1] == '\n' || line[n - 1] == '\r'))
+                    line[--n] = 0;
+                char* eq = strchr(line, '=');
+                if (!n || line[0] == ';' || !eq)
+                    continue;
+                *eq = 0;
+                bool cosmetic = CfgKeyCosmetic(line);
+                *eq = '=';
+                Log("Cfg %s%s", line, cosmetic ? "  ; не в отпечатке" : "");
+                if (!cosmetic)
+                {
+                    hCfg = CfgFnv(hCfg, line, n);
+                    hCfg = CfgFnv(hCfg, "\n", 1);
+                }
+            }
+            fclose(f);
+        }
+        DeleteFileA(tmp);
+    }
+
+    // 2) defines_v2dll.txt: строки без комментариев, без пробелов.
+    char dpath[MAX_PATH];
+    V2dllDefinesPath("defines_v2dll.txt", dpath, sizeof(dpath));
+    static char dbuf[16384];
+    size_t dlen = 0;
+    if (ReadWholeFile(dpath, dbuf, sizeof(dbuf), &dlen))
+    {
+        size_t pos = 0;
+        while (pos < dlen)
+        {
+            size_t end = pos;
+            while (end < dlen && dbuf[end] != '\n')
+                ++end;
+            char norm[1024];
+            size_t k = 0;
+            for (size_t i = pos; i < end && k + 1 < sizeof(norm); ++i)
+            {
+                char c = dbuf[i];
+                if (c == '#')
+                    break;
+                if (c == ' ' || c == '\t' || c == '\r')
+                    continue;
+                norm[k++] = c;
+            }
+            norm[k] = 0;
+            if (k)
+            {
+                Log("Cfg def %s", norm);
+                hDef = CfgFnv(hDef, norm, k);
+                hDef = CfgFnv(hDef, "\n", 1);
+            }
+            pos = end + 1;
+        }
+    }
+    else
+        Log("Cfg def: '%s' не прочитан", dpath);
+
+    // 3) production_types.txt (ровно тот файл, что читает LoadProductionTypeLimits).
+    char dir[MAX_PATH];
+    GetOwnDllDirectory(dir, sizeof(dir));
+    static char pbuf[1 << 20];
+    size_t plen = 0;
+    char ppath[MAX_PATH];
+    sprintf_s(ppath, sizeof(ppath), "%s\\mod\\2\\common\\production_types.txt", dir);
+    bool pok = ReadWholeFile(ppath, pbuf, sizeof(pbuf), &plen);
+    if (!pok)
+    {
+        sprintf_s(ppath, sizeof(ppath), "%s\\common\\production_types.txt", dir);
+        pok = ReadWholeFile(ppath, pbuf, sizeof(pbuf), &plen);
+    }
+    if (pok)
+    {
+        for (size_t i = 0; i < plen; ++i)
+            if (pbuf[i] != '\r')
+                hProd = CfgFnv(hProd, &pbuf[i], 1);
+        Log("Cfg production_types.txt: '%s' (%u байт)", ppath, (unsigned)plen);
+    }
+    else
+        Log("Cfg production_types.txt: не найден");
+
+    _snprintf_s(g_cfgFpLine, sizeof(g_cfgFpLine), _TRUNCATE,
+        "dll=%s cfg=%08X defs=%08X prod=%08X", MOD_VERSION, hCfg, hDef, hProd);
+    Log("ConfigFingerprint: %s", g_cfgFpLine);
+    if (g_settings.enableOosLog)
+        LogOosFile("config %s", g_cfgFpLine);
+    if (g_rngProbeOn)
+        LogRngFile("config %s", g_cfgFpLine);
+}
+
 static bool Install()
 {
     LoadSettings();
@@ -22967,6 +25435,9 @@ static bool Install()
     }
 
     InstallOosWatch();
+    InstallRngProbe();
+    InstallEventRollProbe();
+    InstallStateProbe();
     HANDLE pasteThread = CreateThread(0, 0, ClipboardPasteWorker, 0, 0, 0);
     if (pasteThread)
     {
@@ -22987,6 +25458,7 @@ static bool Install()
         if (ResolveModFolder(modDir, sizeof(modDir)))
             LoadV2Mods(modDir);
     }
+    LogConfigFingerprint();
 
     Log("Install: done");
     return true;
