@@ -20,9 +20,6 @@ Vanilla file lua51.dll is replaced by a brand new file, where the patches are co
 The old file must still remain in the folder under name "lua51_real.dll" - 
 it's being called by the new file, so no vanilla code is lost and the game can still run.
   
-There are also d3d9.dll and dgVoodoo.conf files.  
-Those are needed for some performance patches.  
-  
 # Feature overview
 ## Explaining each option in the .ini file
 ### Local Config
@@ -31,98 +28,92 @@ This option allows to use different configurations for different installed mods.
 is copy the .ini file to a mod folder, and launch the mod as usual.
 
 ### Military
-#### 1. PATCH_ALWAYS_ADD_WARGOALS
+#### 1. ALWAYS_ADD_WARGOALS 
 Zombiefreak's patch for enabling adding wargoals without having positive warscore.
-#### 2. PATCH_LAND_REINFORCE / PATCH_NAVAL_REINFORCE
+#### 2. ARMY_FIX_BAD_REINFORCEMENT / NAVY_FIX_BAD_REINFORCEMENT
 Zombiefreak's patches to make navies and brigades inside armies and fleets reinforce separately, fixing slower than intended reinforcement under insufficient supplies.
-#### 3. PATCH_ALLIED_REINFORCE_150
-Increases reinforce rate on allied land from 100% to 150%. Note, that without "PATCH_OCCUPIED_REINFORCE_SPLIT" patch,  
-reinforce rate will still be 150% in ally-occupied provinces, not just owned.
-#### 4. PATCH_OCCUPIED_REINFORCE_SPLIT / PATCH_ALLY_OWNER_CHECK
-Splits reinforce rates on allied land into allied-owned and allied-occupied land. Allied-occupied reinforce rate is 100%, the same as if you occupy it yourself.  
-Needs to be used with "PATCH_ALLIED_REINFORCE_150" to achieve a total effect of just increasing reinforce rate in allied-owned land.
-#### 5. PATCH_ALLY_EMBARK / SHOW_ALLY_EMBARKED_TOOLTIP
-Allows sending armies to allied transport navies in adjacent sea tile. Untested in Multiplayer.
-#### 6. PATCH_COMBAT_ROLL
+#### 3. ARMY_BETTER_REINFORCE_ON_ALLIED_OWNED_LAND
+Increases reinforce rate on allied owned land from 100% to 150% (for comparison, your own land is 200%, occupied is 100%).
+#### 5. NAVY_ALLOW_USE_ALLY_TRANSPORTS
+Allows sending armies to allied transport navies in adjacent sea tile.
+#### 6. COMBAT_ENABLE_ROLL_CHANGES
 Enables patch for dice rolls in battle.
 #### 7. COMBAT_ROLL_MIN / COMBAT_ROLL_MAX
 Min and Max dice rolls in battle.  
-#### 8. PATCH_COMBAT_LOSS_POPUP_ALL
+#### 8. COMBAT_LOSSES_VISIBLE_TO_EVERYONE
 Daily casualties in a battle are now visible to all countries, not just the ones participating in the battle.
+#### 9. COMBAT_SECOND_LINE_SUPPORT_UNIT_PRIORITY
+If there are units with support stat in reserve during battle, they will be prioritized to occupy vacant slots in the second row.
+#### 10. BATTLE_SECOND_LINE_DAMAGE_REDIRECT
+If enabled, units from second row will be able to damage enemy's second row units, 20% redirected from damage to the first row.
   
 ### Economic
-#### 1. ENABLE_PRICE_DELTA
+#### 1. TRADE_PRICE_DELTA_PERCENTUAL 
 Prices shift by 0.25% of the base price instead of flat 0.01 per day.
-#### 2. PATCH_EXPONENTIAL_PRICE_DELTA
+#### 2. TRADE_PRICE_DELTA_EXPONENTIAL 
 Enables exponential price shifts instead of flat or percentual. INCOMPATIBLE with №1 (made by vesper).
-#### 3. PATCH_MAX_RELATIVE_PRICE
+#### 3. TRADE_MAX_PRICE_20X_MULTIPLIER
 Just changes the price ceiling from x5 of base price to x20 of it.  
 Note: an overflow might occur that will break your game if prices of some factory inputs go beyond its max savings. I recommend increasing MAX_FACTORY_MONEY_SAVE define if you are using this.
-#### 4. PATCH_BUILD_FACTORY_IGNORE_COLONIAL_1 / PATCH_BUILD_FACTORY_IGNORE_COLONIAL_2
-Allow construction of factories in colonial regions. Needs to be used together with UI №5.
-#### 5. PATCH_BUILD_FACTORY_BUTTON_ENABLE_IGNORE_COLONIAL
-Button called "hide_colonial_states" in production menu will now toggle visibility of colonial regions in the menu.
-#### 6. PATCH_LOCAL_SUPPLY_FACTORY_IGNORE_COLONIAL
+#### 4. FACTORY_ALLOW_CONSTRUCTION_IN_COLONIAL
+Allow construction of factories in colonial regions. Button called `hide_colonial_states` in `country_production.gui`
+will toggle visibility of colonial states in the list. Need to allow some factories for construction
+manually in options below.
+#### 6. FACTORY_COLONIAL_ALLOW_LOCAL_SUPPLY
 Allows construction factories with "limit_by_local_supply = yes" attribute to be constructed in colonies (hi vic uni)  
-You don't need this if you enable №9.
-#### 7. PATCH_BUILD_FACTORY_IGNORE_UNCIVILIZED_BUTTON, PATCH_BUILD_FACTORY_CHECKLIST_UNCIVILIZED_OWN, PATCH_BUILD_FACTORY_CHECKLIST_UNCIVILIZED_OTHER, PATCH_BUILD_FACTORY_IGNORE_UNCIVILIZED_CAN_BUILD
+#### 7. FACTORY_ALLOW_UNCIV_CONSTRUCTION
 Allows uncivilized countries to construct factories.
-#### 8. PATCH_PROD_TYPE_GATE
-Has to be enabled for №4, №5 and №6.
-#### 9. PROD_TYPE_GATE_ALLOW_ALL
+#### 8. FACTORY_COLONIAL_ALLOW_ALL
 Allows construction of all factories in colonial regions, not just whitelisted (see №10) and ones with "limit_by_local_supply = yes" attribute.
-#### 10. PROD_TYPE_GATE_EXTRA_WHITELIST=X
+#### 9. FACTORY_COLONIAL_EXTRA_WHITELIST=X
 Type in production types separated by comma to allow constructing them in colonial regions, if you do not intend allowing all factories.  
-Can work together with №6.  
-#### 11. ENABLE_MINTING
-Every country gets a new daily income called "minting", calculated from a formula you write in `common\defines_v2dll.txt` inside your mod folder.
-#### 12. ENABLE_GOODS_CONSUMPTION
-Teaches the game the key `goods_consumption = { cement = 5 steel = 5 }` in a building of `common\buildings.txt` (without the patch the vanilla parser mis-reads the block and the game crashes).
-Adds daily consumption of set goods to country budget. You'll have to add a text label with name `naval_base_expense` to `country_budget.gui`.
-Only buildings with `province = yes` are counted. Up to 16 goods per building.
-#### 13. GOODS_CONSUMPTION_MARKET_DEMAND
-With №12: the bought amounts are also added to the demand of the world market (the same demand the price formula uses), 
-so the state really competes for the goods and prices react. `0` = only money is paid, the market is not touched (turn this on if you don't want money to go into nowhere out of the world economy).
-#### 14. PATCH_BUDGET_TOTAL_INCOME_TARIFFS
-The "Total income" row of the budget window did not include tariff income. This patch fixes it.
-#### 15. PATCH_FACTORY_CLOSE_PAYOUT / PATCH_FACTORY_AUTO_CLOSE_UNPROFITABLE / FACTORY_CLOSE_DRY_RUN
-Vanilla factories keep their savings (up to `MAX_FACTORY_MONEY_SAVE` x level) when they stop or are closed by hand: the money just freezes inside, and a factory that loses money only closes after the savings run out.  
-`PATCH_FACTORY_CLOSE_PAYOUT`: whenever a factory is closed (by hand, automatically by `PATCH_FACTORY_AUTO_CLOSE_UNPROFITABLE`, or when the game stops it at level 1), all the money stored in it is paid to the capitalists of its state (the same payout the game uses for a factory's surplus). If the state has no owners the money stays in the factory.  
-`PATCH_FACTORY_AUTO_CLOSE_UNPROFITABLE`: a factory that is not subsidized and has been unprofitable (sales below the cost of its input goods) for `factory_unprofitable_close_days` days in a row (set in `common\defines_v2dll.txt`) is closed automatically, as if closed by hand.  
-`FACTORY_CLOSE_DRY_RUN`: nothing is changed, the log only gets `[DRY]` lines saying which factories would be closed/paid.
-#### 16. PATCH_FACTORY_MIN_WAGE
-Every factory pays its workers at least X pounds per day per 10000 workers (default 7; set in `<mod>\common\defines_v2dll.txt`), whether or not it is profitable. The wage is paid only from the money the factory has. Where the profit gives a higher wage the game's own logic (the `leftover` share and the `minimum_wage` reform) applies as before: the larger value is paid.
-#### 17. PATCH_NEEDS_HONEST_UI
-Fixes "100% needs fulfilled" in pops menu, when in reality it is not the case. With this patch, real needs fulfillment is displayed.
+Can work together with PATCH_LOCAL_SUPPLY_FACTORY_IGNORE_COLONIAL.  
+#### 10. FACTORY_REFUND_SAVINGS_ON_CLOSE
+Factory will transfer its savings to capitalists in region. Money will be wasted if there are none.
+#### 11. PATCH_FACTORY_AUTO_CLOSE_UNPROFITABLE
+Unsubsidized unprofitable factories (income minus goods cost is negative, salaries are not included)
+will be automatically closed after 60 days (configurable in `<mod>/common/defines_v2dll.txt`).
+#### 12. FACTORY_AI_SPAM_FIX
+AI countries expand an existing factory only if enough of its jobs are filled with workers.
+Fixes vanilla AI expanding factories to ridiculous levels for no reason.
+#### 13. FACTORY_FORCE_MIN_WAGE 
+Factories will be forced to pay minimum wage per 10K workers (configurable in `<mod>/common/defines_v2dll.txt`).
+#### 14. FACTORY_AI_FACTORY_PRIORITY_RULESWAP 
+AI will manage factory priotities if economic policy has `factory_priority = yes` instead of `delete_factory_if_no_input = yes`.
+#### 15. POP_CARD_NEEDS_AFFECTED_BY_NEEDS_MODIFIERS_FIX
+Pop goods consumption in pop card will now be affected by pop need modifiers.
+#### 16. POP_BUDGET_PAYOUT_NEEDS_SCALED 
+Budget payments to pops will scale with pop need modifiers.
+#### 17. POP_FIX_NEEDS_MODIFIERS
+Fixes pop need modifiers, they now do exactly what you expect (some of them were switched up).
+#### 18. ENABLE_MINTING
+Every country gets a new daily income called "minting", calculated from a formula you write in `<mod>/common\defines_v2dll.txt` inside your mod folder. 
+`minting_inc` label in `country_budget.gui` will display the income.
   
-
-### UI
-#### 1. ENABLE_BUTTONS
+  
+### UI 
+#### 1. ENABLE_BUTTONS 
 Adds support for a few new buttons:  
 - FE_ACADEMIES_BDSM; must be located in tech menu; triggers decision "open_academy_decisions_dec"  
 - FE_RPROJECTS_BDSM; must be located in tech menu; triggers decision "open_research_projects_dec"  
 - FE_BUDGET_DIPLO_BDSM; must be located in budget menu; triggers decision "exchange_settings_dec"  
 ^ those decisions have to be available to be clicked for the country (potential and allow triggers have to be true).
-#### 2. ENABLE_DECISION_FILTER
+#### 2. ENABLE_DECISION_FILTER 
 Hides abovementioned decisions from the regular decision menu (basically I'm decluttering dec menu by adding new buttons for some decs).
-#### 3. ENABLE_POP_DISPLAY
-Total population is displayed in some surface tooltips, instead of "grown male" population. Not in all of them, so it might confuse the player a bit.
-#### 4. ENABLE_VERSION_LABEL
+#### 4. ENABLE_VERSION_LABEL 
 Changes version label in main menu to "V2 v3.04 + V2DLL v*"
-#### 5. PATCH_PROD_LIST_VISIBILITY
-Needed for Economic №4.
-#### 6. HIDE_UNAVAILABLE_LIMIT_BY_SUPPLY_FACTORIES
+#### 6. HIDE_UNAVAILABLE_LIMIT_BY_SUPPLY_FACTORIES 
 Hides factories with "limit_by_local_supply = yes" from factory construction menu if there is no required supply in the region.
 #### 7. HIDE_RAW_GOODS_FILTER
 Hides filter buttons (in production tab) for goods that name starts with "raw_"
 #### 8. FILTER_SHOW_ALL_FACTORIES_IN_STATE
 Production tab filters will now show all factories in a state with filtered factory.
-#### 9. FILTER_PRODUCERS_ONLY
+#### 9. FACTORY_FILTER_BY_PRODUCERS_ONLY
 Production tab filters will show only producing factories of selected good, not both producers and consumers.
-#### 10. PLAYER_BUTTONS
+#### 10. ENABLE_MUSIC_PLAYER
 Buttons located in topbar called "button_fe_player_pause", "button_fe_player_next" and a slider "fe_player_volume_slider"
 will pause, skip and configure music volume.
-#### 11. ENABLE_GOODS_ICONS
+#### 11. GOODS_ICONS_AS_SEPARATE_FILES
 On by default, does nothing until a good gets an `icon` key. Goods icons no longer have to live in the three big atlases (`gfx\interface\resources.dds`, `resources_big.dds`, `resources_small.dds`). Give a good in `common\goods.txt` a path to its own folder:
 ```
 cotton = {
@@ -131,30 +122,56 @@ cotton = {
     icon = "gfx\\goods\\cotton"
 }
 ```
-and put the icons there: `big.dds` (the size of one frame of `resources_big.dds`), `normal.dds` (`resources.dds`) and `small.dds` (`resources_small.dds`); `.tga`, `.png` and `.bmp` work too. A missing size is made from the nearest present one by scaling; `icon` may also point to a single image (used for all three sizes). Goods without the key, or with nothing found, keep their frame from the atlas. The frame size is taken from the atlas (width / `noOfFrames` of the sprite in `interface\core.gfx`), so keep the atlases in the mod; they are the fallback. The `icon` key is cut out of `goods.txt` before the game parses it, so the vanilla parser never sees it.
-  
+and put the icons there: `big.dds` (the size of one frame of `resources_big.dds`), `normal.dds` (`resources.dds`) and `small.dds` (`resources_small.dds`); `.tga`, `.png` and `.bmp` work too. A missing size is made from the nearest present one by scaling; `icon` may also point to a single image (used for all three sizes). Goods without the key, or with nothing found, keep their frame from the atlas. The `icon` key is cut out of `goods.txt` before the game parses it, so the vanilla parser never sees it.
+#### 12. ENABLE_RESTART_GAME_BUTTON
+Button in "ESC" menu (`menubar.gui`) called `true_exit` will restart the game.
+#### 13. FIX_BUDGET_TOTAL_INCOME_LABEL
+The "Total income" row of the budget window did not include tariff income. This patch fixes it.
+#### 14. PATCH_NEEDS_HONEST_UI
+Fixes "100% needs fulfilled" in pops menu, when in reality it is not the case. With this patch, real needs fulfillment is displayed.
+   
 ### Miscellaneous
-#### 1. PATCH_CONSCIOUSNESS_PLURALITY_GROWTH
+#### 1. PATCH_REMOVE_CONSCIOUSNESS_PLURALITY_GROWTH 
 Removes plurality growth from average consciousness. In-game tooltip says otherwise though. So this patch removes this tooltip too (hi tgc)
 #### 2. PATCH_CIVILIZE_NULL_CHECK
 Fixes a crash when a country that has factories civilizes.
 #### 3. PATCH_GRAPH_POINT_CLAMP
-Prevents the game from crashing from overflow I talked about in Economic №2 (doesn't prevent it from happening though).
+Prevents the game from crashing from overflow I talked about in Economic №3 (doesn't prevent it from happening though).
 #### 4. PATCH_ALLOW_UNCIV_TECH_RESEARCH
 Allows non-ai uncivs to research tech. (made by maxioten).
-#### 5. PATCH_ARISTOCRAT_INCOME_SHARE
-Doubles aristocrat income share from RGO (made by vesper).
-#### 6. MUSIC_FAIR_RANDOM
-Music will be selected randomly (while following triggers written in songs.txt), unlimiting amount of music tracks in a mod.
-#### 7. PATCH_TECH_NULL_CHECK_FIXES
+#### 5. MUSIC_FAIR_RANDOM
+Music will be selected randomly (while following triggers written in songs.txt), unlimiting amount of music tracks in a mod (vanilla player can only play ~<10 tracks).
+#### 6. PATCH_TECH_NULL_CHECK_FIXES
 Fixes miscellaneous crashes when opening tech tab.
-#### 8. PATCH_SUPPLY_SOURCE_NULL_CHECK
+#### 7. PATCH_SUPPLY_SOURCE_NULL_CHECK
 Prevents game from crashing in miscellaneous scenarios with "limit_by_local_supply = yes" factories.
-#### 9. PATCH_AI_NAVAL_BASE_LIMIT
-Off by default. When enabled, an AI country founds naval bases in at most `ai_naval_base_max_provinces_per_state` provinces of one state (`<mod>\common\defines_v2dll.txt`, default 1, `0` = no limit). The vanilla AI builds a base in every port province. Upgrading an existing base is not limited. The player and capitalists are not limited. Must be the same for all players of a multiplayer game.
+#### 8. PATCH_AI_NAVAL_BASE_LIMIT
+When enabled, an AI country founds naval bases in at most `ai_naval_base_max_provinces_per_state` provinces of one state (`<mod>\common\defines_v2dll.txt`, default 1, `0` = no limit). The vanilla AI builds a naval base in every port province. The player and capitalists are not limited.
+#### 9. LOAD_DLL_FROM_MOD_FOLDER
+V2DLL will load `v2dll_mod.dll` in the mod folder. In case you want to add new patches for your mod independently.
+  
+### Script Extensions
+#### 1. ENABLE_ASSIMILATE_BLOCK 
+Expands `assimilate` effect. Example:
+```
+any_pop = {
+	limit = { culture = french }
+	assimilate = { culture = north_german amount = 0.5 }
+}
+```
+(made by GODOG) 
+#### 2. BUILDING_GOODS_CONSUMPTION
+Teaches the game the key `goods_consumption` in a building of `common\buildings.txt` (without the patch the vanilla parser mis-reads the block and the game crashes).
+Adds daily consumption of set goods to country budget. You'll have to add a text label with name `naval_base_expense` to `country_budget.gui`.
+Only buildings with `province = yes` are supported. Up to 16 goods per building.
+Example:
+```goods_consumption = { cement = 5 steel = 5 }```
+#### 3. ENABLE_EVENT_SOUNDS
+Enables playing sounds on certain events. Like the super-events. 
+Read `/watch/music.txt` file for more information (made by maxioten).
   
 ### Stability and Performance
-#### 1. PATCH_FPU_FORTRESS / PATCH_D3D_FPU_PRESERVE
+#### 1. PATCH_FPU_FORTRESS / PATCH_D3D_FPU_PRESERVE 
 Fixes some float math errors related to different GPU/Drivers (fixes some of desync cases) (made by av213238).
 #### 2. PATCH_THREAD_FPU_PIN
 Fixes some math errors related to multi-threading (fixes some of desync cases) (made by av213238).
@@ -166,27 +183,27 @@ In theory, might reduce desync probability if all lobby participants have the sa
 #### 5. PATCH_POP_QUANTIZE / POP_QUANTIZE_KEEP_BITS
 Rouns up microscopic pop attributes (money, savings, etc) that you would never even see in game. 
 Might decrease related desync probability and improve performance a bit (rounds up to 12 bits by default, vanilla is 15) (made by av213238).
-#### 6. PATCH_MP_CLIENT_SLEEP / MP_CLIENT_SLEEP_MS
-Removes sleepers, that reduce FPS. Experimental (made by av213238).
-#### 7. PATCH_MAIN_LOOP_SLEEP0 / MAIN_LOOP_SLEEP_MS
-In theory also improves performace of the host/singleplayer. Experimental (made by av213238).
+#### 6. REMOVE_SLEEPERS
+Removes sleepers, that artificially reduce FPS but improve FPS stability (they are not necessary for modern PCs) (made by av213238).
 #### 8. PATCH_D3D_NO_VSYNC
-Force disables VSYNC. Experimental. (made by av213238).
+Force disables VSYNC. Disabling may cause freezes and stutters. (made by av213238).
 #### 9. D3D_FPS_LIMIT
-FPS Limiter. Set to 0 to disable.
+FPS Limiter. Set to 0 to disable (made by av213238).
 #### 10. FIX_SFX_MIXER_LAG
-Fixes behaviour where game constantly tries to access sound mixer for no reason. Huge performance improvement,
-especially noticeable on non-host client in a MP lobby. Enable sleeper patches above. (made by av213238).
+Fixes behaviour where game constantly tries to access sound mixer for no reason. Enable sleeper patches above. (made by av213238).
 #### 11. FIX_ARMY_WINDOW_LAG
-Fixes stutters while army/armies are selected.
+Fixes stutters while army/armies are selected (made by av213238).
 #### 12. PATCH_HIGH_PRIORITY
 Prioritizes the game process. Supposed a marginal performance gain (made by av213238).
-
+#### 13. PATCH_COMPRESS_FLAG_CACHE
+Compresses flag cache to reduce RAM usage (made by wyrm).
+#### 14. PATCH_PREFETCH_POPS, PATCH_CULL_DECISION_CHECKS, PATCH_CULL_CB_CHECKS, PATCH_PREFETCH_RELATIONS, PATCH_PREFETCH_AI_RELATIONS, PATCH_FAST_AI_QUEUE, PATCH_PARALLEL_DECISIONS, PATCH_PARALLEL_EVENTS
+Some of the performance patches made by wyrm. Should improve game speed, especially on heavy mods.
   
-### Diagnostics
-#### 1. ENABLE_LOG
+### Diagnostics 
+#### 1. ENABLE_LOG 
 Just the log used for debugging the .dll. By default it only gets patch install lines, errors and a few one-time status lines.
-#### 1a. DEBUG_LOG
+#### 1a. DEBUG_LOG 
 Off by default. Turns on the verbose development diagnostics (per-frame / per-event records, probes, dumps: `Present` frame statistics, `IdleSpike`, ally-embark and army-selection traces, goods-filter probes, goods consumption market numbers, ...). With it on the log grows by tens of megabytes; turn it on only to investigate a problem.
 #### 2. PATCH_FACTORY_DUMP_SCAN
 I used this to debug overflow related to Economic №3 (didn't help much).
@@ -200,9 +217,8 @@ Creates Windows memory dump on game crash (made by av213238).
 Used for debugging Economic №6.
 #### 6. FACTORY_EXPAND_TRACE
 On by default. Observer only, changes nothing in the game: writes `Logs\v2dll_expand.log`, one line each time a factory starts to expand (date, country and factory type, level, how many of its workers are employed, the same for the whole state), separately for capitalist projects and for direct expansions by countries (AI or player). Used to find out how oversized, understaffed factories come about.
-#### 7. PATCH_AI_EXPAND_STAFFING
-On by default. AI countries expand an existing factory only if enough of its jobs are filled with workers. The vanilla AI builds the most profitable factory type up to huge levels with almost no workers (it looks at the unemployed share of the whole state, not at free craftsmen). The required share is `ai_factory_expand_min_staffing` (percent, default 90, `0` = vanilla behaviour) in `<mod>\common\defines_v2dll.txt`; capitalists need about 90 % in vanilla already. The player is not affected. All players of a multiplayer game need the same DLL and the same value.
-
+#### 7. PATCH_STATE_SAVINGS_CAP / STATE_SAVINGS_CAP_POUNDS 
+Caps state savings to fix repeating desyncs in MP.
 
 Russian Victoria 2 community: https://discord.gg/f3dpWFt2bR  
 Also check this out for other reverse engineering findings: https://github.com/maxioten/Victoria2-Reverse-Engineering/tree/main  

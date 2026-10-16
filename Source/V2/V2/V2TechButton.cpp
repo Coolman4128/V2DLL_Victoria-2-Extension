@@ -40,7 +40,7 @@
 // "у кого-то старая DLL" — сравнить эту строку в логах перед сетевой
 // игрой.
 // CLAUDE МЕНЯЙ ВЕРСИЮ ПРИ КАЖДОЙ ПРАВКЕ ФАЙЛА
-#define MOD_VERSION "5.76"
+#define MOD_VERSION "5.82"
 
 // Настройки ниже читаются из v2dll_settings.ini рядом с exe при
 // каждом запуске игры. Если файла ещё нет, он создаётся со
@@ -59,72 +59,65 @@ struct Settings
     bool debugLog       = false; // DEBUG_LOG: отладочные записи (LogDbg) - см. определение рядом с Log
     bool buttons        = true;   // кнопки, запускающие решения
     bool decisionFilter = true;   // скрытие решений из окна политики
-    bool priceDelta     = true;  // процентный шаг изменения цен
-    bool popDisplay     = false;  // общее население в верхней панели (откачено: не смогли дописать сырое число в скобках без риска)
+    bool tradePriceDeltaPercentual     = true;  // процентный шаг изменения цен
     bool versionLabel   = true;   // версия мода в подписи главного меню
 
     // Байтовые патчи exe из таблицы EXE_PATCHES (см. ниже по файлу)
     // управляются напрямую через BytePatch::enabled по ключам
     // PATCH_<ИМЯ> в ini - здесь только патчи exe, не входящие в эту
     // таблицу (каждый - отдельная функция со своим хуком).
-    bool patchOccupiedReinforceSplit = true;
-    bool patchAllyOwnerCheck         = true;
+    bool armyBetterReinforceOnAlliedOwnedLand = true;
     // Посадка своей армии на флот постоянного союзника (не только свой
     // флот) - и в пути, и кликом на клетку, где армия уже стоит. Проверено
     // только статически (не в игре) - выключено по умолчанию, см.
     // InstallAllyEmbark.
-    bool patchAllyEmbark             = false;
+    bool navyAllowUseAllyTransports             = true;
     // Подсказка над "Высадить" у флота: если на борту есть чужие войска,
     // дописывает их теги владельцев. Не зависит технически от
-    // patchAllyEmbark (данные читаются, не пишутся), но без него на
+    // navyAllowUseAllyTransports (данные читаются, не пишутся), но без него на
     // борту просто не может оказаться чужой армии - смысла нет отдельно
     // включать один без другого.
-    bool showAllyEmbarkedTooltip     = true;
     bool patchCivilizeNullCheck      = true;
     bool patchSupplySourceNullCheck  = true;
     // Два краша окна технологий на пустом "статусе" (сортировка списка и
     // иконка папки) - см. InstallTechCompareNullCheck / InstallTechFolderIconNullCheck.
     bool patchTechNullCheckFixes     = true;
     bool patchGraphPointClamp        = false;
-    bool patchFactoryDumpScan        = false;
-    bool patchProdListVisibility     = true;
-    bool patchProdTypeGate           = true;
+    bool factoryAllowConstructionInColonial     = true;
     bool patchHideNoSupplyFactories  = true;
-    bool hideNoSupplyDryRun          = false; // файловый подход подтверждён - см. комментарий у g_hideNoSupplyDryRun
     // Фабрики: накопления уходят владельцам при любом закрытии, а убыточная
     // несубсидируемая фабрика закрывается сама (срок - в common\defines_v2dll.txt).
     // См. InstallFactoryClose. DRY_RUN: только лог, ничего не меняется.
-    bool patchFactoryClosePayout     = true;
-    bool patchFactoryAutoClose       = true;
-    bool factoryCloseDryRun          = false;
+    bool factoryRefundSavingsOnClose     = true;
+    bool factoryAutoCloseUnprofitable       = true;
     // PATCH_AI_EXPAND_STAFFING: ИИ-страна расширяет существующую фабрику
     // (FUN_00857530, выбор региона) только если она укомплектована рабочими
     // не меньше ai_factory_expand_min_staffing % (common\defines_v2dll.txt).
-    bool patchAiExpandStaffing       = true;
+    bool factoryAiSpamFix       = true;
     // PATCH_AI_NAVAL_BASE_LIMIT: ИИ не закладывает новую морскую базу (уровень
     // 0 -> 1) в регионе, где базы уже есть в >= ai_naval_base_max_provinces_per_state
     // провинциях (common\defines_v2dll.txt). Улучшение существующей не ограничено.
     bool patchAiNavalBaseLimit       = false;
-    // PATCH_FACTORY_MIN_WAGE: фиксированный минимум зарплаты работникам фабрики
+    // FACTORY_FORCE_MIN_WAGE: фиксированный минимум зарплаты работникам фабрики
     // (factory_min_wage_per_10000 фунтов в день на 10000 работников из
     // common\defines_v2dll.txt), не зависящий от прибыльности.
-    bool patchFactoryMinWage         = true;
+    bool factoryForceMinWage         = true;
     // PATCH_NEEDS_HONEST_UI: доли выполнения потребностей попа на экране (подсказки, окно
     // попа) умножаются на фактическое покрытие общего пула денег типа попа. Только вид.
     bool patchNeedsHonestUi          = true;
     // PATCH_FACTORY_PRIORITY_BY_RULE: приоритеты фабрик страны перезаписываются движком не при
     // rules factory_priority = no, а при delete_factory_if_no_input = yes; патч переключает на
     // factory_priority = no.
-    bool patchFactoryPriorityByRule  = true;
+    bool factoryAiFactoryPriorityRuleSwap  = true;
     // PATCH_POP_CARD_STRATA_MODIFIERS: количества нужд в карточке попа учитывают модификаторы
     // страны poor_/middle_/rich_ life/everyday/luxury_needs (только отображение).
-    bool patchPopCardStrataMods      = true;
+    bool popCardNeedsAffectedByNeedsModifiersFix      = true;
     // PATCH_BUDGET_PAYOUT_BY_NEEDS: выплаты из бюджета типу попов (education/administration/military)
     // умножаются на (1 + модификатор poor_/middle_/rich_ *_needs) его страты и класса нужд.
-    bool patchBudgetPayoutByNeeds    = true;
+    bool popBudgetPayoutNeedsScaled    = true;
     // PATCH_FIX_STRATA_NEEDS_MODIFIERS: исправление ванильной путаницы middle/rich у модификаторов
     // *_life_needs и *_everyday_needs (значение попадало в слот другой страты).
-    bool patchFixStrataNeedsMods     = true;
+    bool popFixNeedsModifiers     = true;
     // Окно фабрик: не показывать в верхнем ряду фильтров кнопки товаров,
     // чьё имя начинается на "raw_" (см. ComputeGoodsFilterPos).
     bool hideRawGoodsFilter          = true;
@@ -135,20 +128,20 @@ struct Settings
     // Окно фабрик: фильтр товара срабатывает только на фабрики, которые
     // ПРОИЗВОДЯТ выбранный товар (оригинал засчитывал и потребителей
     // сырья) - регионы, где товар только потребляют, не показываются.
-    bool filterProducersOnly         = true;
+    bool factoryFilterByProducersOnly         = true;
     // Иконки товаров из отдельных папок: ключ icon = "<папка>" в common\goods.txt
     // заменяет ячейку товара в resources*.dds (см. InstallGoodsIcons).
-    bool goodsIcons                  = true;
+    bool removeSleepers = true;
+    bool goodsIconsAsSeparateFiles                  = true;
     // Кнопка "button_fe_player_next" из interface\topbar.gui пропускает
     // играющий трек (см. SetupPlayerButtons).
-    bool playerButtons            = true;
+    bool enableMusicPlayer            = true;
     // Выбор песни (FUN_00455290): настоящий случайный выбор вместо
     // "случайных" чисел из непроинициализированной памяти стека
     // (см. InstallMusicFairRandom).
     bool musicFairRandom             = true;
-    bool EventSounds             = true;
-    bool restartOnBackendBg      = false; // reiniciar una vez al cargar backend_bg.dds
-    bool trueExitButton          = true;  // botón del menú de pausa que reinicia conservando el mod
+    bool EventSounds             = false;
+    bool enableRestartGameButton          = true;  // botón del menú de pausa que reinicia conservando el mod
 
     // Ежедневный доход "minting" по формуле из <мод>\common\minting.txt
     // (см. InstallMinting). Без файла формулы ничего не делает.
@@ -159,29 +152,27 @@ struct Settings
     // naval_base_expense (см. InstallGoodsConsumption). false - блок только
     // читается, ничего не покупается.
     bool goodsConsumption            = true;
-    // Прибавлять закупленное к спросу рынка (иначе государство только
     // платит деньги, цены не двигаются).
-    bool goodsConsumptionDemand      = true;
     // assimilate = { culture = ... religion = ... amount = ... } (block form).
     bool assimilateBlock             = true;
     // Load the running mod's v2dll_mod.dll if it has one (see V2ModAPI.h).
-    bool enableMods                  = true;
+    bool loadDllFromModFolder                  = true;
 
-    // Взаимоисключающе с priceDelta (ENABLE_PRICE_DELTA) - оба
+    // Взаимоисключающе с tradePriceDeltaPercentual (TRADE_PRICE_DELTA_PERCENTUAL) - оба
     // патчат один и тот же адрес. Если включены оба, побеждает этот.
-    bool patchExponentialPriceDelta = false;
+    bool tradePriceDeltaExponential = false;
 
     // Если true - PATCH_PROD_TYPE_GATE разрешает строить в колонии
     // ЛЮБОЙ тип производства. Если false - только типы из белого
-    // списка (limit_by_local_supply=yes + PROD_TYPE_GATE_EXTRA_WHITELIST
+    // списка (limit_by_local_supply=yes + FACTORY_COLONIAL_EXTRA_WHITELIST
     // ниже, см. g_extraWhitelistNames).
-    bool prodTypeGateAllowAll = false;
+    bool factoryColonialAllowAll = false;
 
     // Разброс броска в бою. Работает только если exe уже несёт
     // "пещеру" от стороннего Vic2_Roll_Changer.py (см. комментарий
     // у InstallCombatRoll ниже по файлу) - без неё сигнатура не
     // совпадёт и патч тихо пропустится.
-    bool patchCombatRoll = true;
+    bool combatEnableRollChanges = true;
     int  combatRollMin   = 0;   // минимум броска
     int  combatRollMax   = 4;   // максимум броска
 
@@ -191,18 +182,17 @@ struct Settings
     // FUN_0059b190, которая клала все резервы сначала во вторую линию.
     // См. InstallReserveFrontline ниже по файлу и
     // v2_battle_re\README_БОЕВЫЕ_ЛИНИИ.md.
-    bool patchReserveFrontline = true;
+    bool combatSecondLineSupportUnitPriority = true;
 
     // Расщепление урона из второй линии: support-юнит (стреляющий со
     // второй линии) наносит 80% урона цели в первой линии противника
     // и 20% - юниту второй линии, стоящему прямо за целью (если он
     // есть; иначе 100% в первую линию). См. InstallSecondLineSplash.
-    bool patchSecondLineSplash = true;
+    bool combatSecondLineDamageRedirect = true;
 
     // Временная диагностика бага с чек-суммой (меняется при входе в
     // партию) - логирует в v2dll.log каждое обращение к источнику
     // чек-суммы. См. InstallChecksumDiagnostic ниже по файлу.
-    bool patchChecksumDiagnostic = false;
 
     // Отдельный Logs\v2dll_oos.log: пишется при вызове FUN_00682EC0
     // (диалог OOS_TITLE / "Games out of synch"). Не каждый тик.
@@ -268,25 +258,16 @@ struct Settings
     // MP FPS: select микшера RVA 0x68B47D (14–20 мс) → 1 мс, копия timeval.
     // 3.24: без IAT Sleep/WFSO/QPC/recv/Idle и без записи в timeval игры.
     // Аудио Sleep(30)/Sleep(35) не трогать. Подробно: Source2/FPS_MP_CLIENT.txt.
-    bool patchMpClientSleep    = true;
     int  mpClientSleepMs       = 1;
 
     // Хост/SP главный цикл: 6A 00 Sleep(0) / 6A 64 Sleep(100) по флагу.
     // Sleep(0) не трогаем — это хост. Sleep(100) режем до MAIN_LOOP_SLEEP_MS.
-    bool patchMainLoopSleep0   = true;
     int  mainLoopSleepMs       = 1;
     // Наши значения: vsync включён (принудительный IMMEDIATE-режим может
     // рвать кадр при скролле списков), мягкий потолок 70 FPS вместо него.
     bool patchD3dNoVsync       = false;
     int  d3dFpsLimit           = 70;
-    bool patchSkipSelProj      = false; // кольцо/mesh selection_projection; 3.32–3.34: не оно ест клик
-    bool patchReuseUnitView    = false; // 3.76: патч окна армии снят. Только таймеры 391BB0/393290.
-    bool patchSkipArmyIdle     = false; // idle 391BB0 нужен иконкам; skip только NeedRebuild.
-    bool patchReuseWindows     = false; // 3.46: Hide-keep GUI = UAF (ивент/диалог удалён, виджет жив)
     bool patchHighPriority     = true;  // ABOVE_NORMAL + без power throttling
-    bool patchSkipNestedIdle   = false; // 3.56: не звать IdleInGame при nest; checksum/насос живы
-    bool patchSkipChkWin       = false; // 3.57 ОШИБКА: 2859C0 = дневной тик сессии, не окна. Не включать.
-    bool patchCamStill         = false; // 3.59 провал: 1e08-skip → лишние IdleInGame, FPS хуже. Не включать.
     bool patchCompressFlagCache = true; // experimental: cache flag atlases as DXT1 instead of uncompressed TGA
     bool patchPopPrefetch = true; // prefetch Victoria 2 pop data before economy loops
     bool patchCullDecisionChecks = true; // filter impossible AI decisions from per-country lists
@@ -1071,7 +1052,7 @@ static bool SetupHideColonialButton(void* view)
 
 
 // ---------------------------------------------------------------
-// PLAYER_BUTTONS - кнопки "плеера" в topbar.gui:
+// ENABLE_MUSIC_PLAYER - кнопки "плеера" в topbar.gui:
 //   button_fe_player_next  - пропускает играющий трек, игра сама включает
 //                            следующий;
 //   button_fe_player_pause - ставит музыку на паузу / снимает с паузы.
@@ -1822,7 +1803,7 @@ static bool SetupTrueExitButtonFromMenuOwner(void* menuOwner)
 
 static void __cdecl OnMenuCloseButtonBound(void* menuOwner)
 {
-    if (!g_settings.trueExitButton || !menuOwner) return;
+    if (!g_settings.enableRestartGameButton || !menuOwner) return;
     DWORD expected = g_base + RVA_MENU_CLOSE_CLICK;
     DWORD actual = 0;
     unsigned char* menuCloseGlue = (unsigned char*)menuOwner + MENU_CLOSE_GLUE_OFFSET;
@@ -2456,7 +2437,7 @@ static DWORD g_goodsFilterPosResume = 0;
 // в самом хвосте (конец 2-го ряда + почти весь 3-й), поэтому скрытие
 // не оставляет дыр посередине.
 //
-// v4.13 - скрытие включено (HIDE_RAW_GOODS_FILTER, по умолчанию 1).
+// v4.13 - скрытие включено (HIDE_RAW_GOODS_PRODUCTION_FILTER_BUTTONS, по умолчанию 1).
 static LONG g_goodsFilterPosHits = 0;
 static LONG g_goodsFilterHideLogged = 0;
 
@@ -2695,7 +2676,7 @@ static int FilterPassProducer(void* view, void* arg)
 // Критерий "фабрика проходит фильтр": оригинальный или только-производители.
 static int FilterPass(void* view, void* arg)
 {
-    return g_settings.filterProducersOnly ? FilterPassProducer(view, arg)
+    return g_settings.factoryFilterByProducersOnly ? FilterPassProducer(view, arg)
                                           : CallOrigFilterPred(view, arg);
 }
 
@@ -2748,7 +2729,7 @@ static void FilterLogRebuildStart(void* view)
 
 static int __cdecl FilterPredHook(void* view, void* factoryArg, char* node)
 {
-    if (!g_settings.filterShowAllInState && !g_settings.filterProducersOnly)
+    if (!g_settings.filterShowAllInState && !g_settings.factoryFilterByProducersOnly)
         return CallOrigFilterPred(view, factoryArg);
 
     __try
@@ -3418,7 +3399,7 @@ static DWORD g_prodTypeGateResumeBlock = 0;
 // тоже нужно разрешить постройку в колонии, но заводить для них
 // целый отдельный флаг в production_types.txt не стали - patch
 // только по имени. По умолчанию это fishery (is_coastal = yes);
-// список редактируется из ini (PROD_TYPE_GATE_EXTRA_WHITELIST) без
+// список редактируется из ini (FACTORY_COLONIAL_EXTRA_WHITELIST) без
 // пересборки DLL - см. ParseExtraWhitelist. Используется только когда
 // PROD_TYPE_GATE_ALLOW_ALL=0 (иначе разрешены все типы, до этого
 // списка дело не доходит).
@@ -3461,9 +3442,9 @@ static int __cdecl IsProdTypeWhitelistedByName(void* typePtr)
 
 static DWORD g_prodTypeGateWhitelisted = 0;
 
-// Плоская копия g_settings.prodTypeGateAllowAll - в наked-asm проще
+// Плоская копия g_settings.factoryColonialAllowAll - в наked-asm проще
 // и безопаснее читать отдельный global bool, чем поле структуры.
-static unsigned char g_prodTypeGateAllowAll = 1;
+static unsigned char g_factoryColonialAllowAll = 1;
 
 __declspec(naked) static void ProdTypeGateThunk()
 {
@@ -3483,7 +3464,7 @@ __declspec(naked) static void ProdTypeGateThunk()
         // PROD_TYPE_GATE_ALLOW_ALL=1 - разрешаем любой тип, дальше по
         // имени вообще не проверяем (белый список ниже используется
         // только в противоположном режиме, ALLOW_ALL=0).
-        cmp byte ptr [g_prodTypeGateAllowAll], 0
+        cmp byte ptr [g_factoryColonialAllowAll], 0
         jz check_by_name
         mov eax, 1
         jmp store_result
@@ -3532,7 +3513,7 @@ static bool InstallProdTypeGateHook()
 {
     LoadProductionTypeLimits();
 
-    g_prodTypeGateAllowAll = g_settings.prodTypeGateAllowAll ? 1 : 0;
+    g_factoryColonialAllowAll = g_settings.factoryColonialAllowAll ? 1 : 0;
 
     g_fnIsBadReadPtr = SafeIsBadReadPtr;
 
@@ -3591,10 +3572,9 @@ static DWORD g_operatorNewAddr        = 0;
 // совпадает с реальными ресурсами региона) - выключено. Единственный
 // критерий скрытия - наличие сырья; "уже построено" НЕ считается
 // причиной скрытия (см. комментарий у SafeShouldHideNoSupplyFactory).
-static unsigned char g_hideNoSupplyDryRun = 0;
 
 // Тот же разбор имени, что и в IsProdTypeWhitelistedByName, но без
-// PROD_TYPE_GATE_EXTRA_WHITELIST - этот список только для патча
+// FACTORY_COLONIAL_EXTRA_WHITELIST - этот список только для патча
 // "разрешить строить в колонии", к видимости в списке не относится.
 // Возвращает индекс в g_productionTypeNames (и параллельных массивах
 // g_limitByLocalSupply/g_productionTypeGood), или -1, если тип
@@ -3786,12 +3766,9 @@ __declspec(naked) static void HideNoSupplyFactoryThunk()
         push eax
         call ShouldHideNoSupplyFactory
         add esp, 8
-        cmp byte ptr [g_hideNoSupplyDryRun], 0
-        jnz not_hidden   // тестовый режим - вердикт залогирован внутри вызова, но не применяем
         test eax, eax
         jnz hidden
 
-    not_hidden:
         push 0x30
         call dword ptr [g_operatorNewAddr]
         jmp dword ptr [g_hideNoSupplyResumeShow]
@@ -3806,7 +3783,6 @@ static bool InstallHideNoSupplyFactoriesHook()
     LoadProductionTypeLimits();
     LoadProvinceGoods();
 
-    g_hideNoSupplyDryRun = g_settings.hideNoSupplyDryRun ? 1 : 0;
 
     unsigned char* hook = (unsigned char*)(g_base + RVA_HIDE_NO_SUPPLY_HOOK);
 
@@ -4082,7 +4058,7 @@ static bool InstallPriceDelta()
 // Экспоненциальный шаг изменения цены (альтернатива InstallPriceDelta)
 //
 // Та же самая точка перехвата (RVA_PRICE_HOOK/RVA_PRICE_RESUME,
-// PRICE_SIG), поэтому взаимоисключающе с ENABLE_PRICE_DELTA - см.
+// PRICE_SIG), поэтому взаимоисключающе с TRADE_PRICE_DELTA_PERCENTUAL - см.
 // проверку в Install(). Получен готовым дизасмом (radare2), байты
 // сверены вручную побайтово с исходным дампом:
 //
@@ -4195,11 +4171,11 @@ static BytePatch EXE_PATCHES[] =
 
     // Было: mov [esp+20h], ecx — пересылка ослабленного снабжения
     // на следующую бригаду в стеке.
-    { "land_reinforce",      0x1C809B, 0, 4, { 0x89, 0x4C, 0x24, 0x20 },
+    { "army_fix_bad_reinforcement",      0x1C809B, 0, 4, { 0x89, 0x4C, 0x24, 0x20 },
                                              { 0x90, 0x90, 0x90, 0x90 }, true },
 
                                              // 89 -> 8B: направление пересылки меняется на обратное.
-                                             { "naval_reinforce",     0x1C7F1C, 0, 1, { 0x89 }, { 0x8B }, true },
+                                             { "navy_fix_bad_reinforcement",     0x1C7F1C, 0, 1, { 0x89 }, { 0x8B }, true },
 
     // Относительный максимум цены (double, значение хранится x16384):
     // было ~10x базовой цены, пробовали x100 (сломало экономику - см.
@@ -4212,7 +4188,7 @@ static BytePatch EXE_PATCHES[] =
     // всё же влияет, просто нелинейно/с обходным путём; если останется
     // x10 - дело не в этой константе вообще. rva задан напрямую (адрес
     // в Ghidra 0xE45C28 минус imagebase 0x400000).
-    { "max_relative_price",  0, 0xA45C28, 8,
+    { "trade_max_price_20x_multiplier",  0, 0xA45C28, 8,
         { 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x04, 0x41 },
         { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x24, 0x41 }, true },
 
@@ -4222,7 +4198,7 @@ static BytePatch EXE_PATCHES[] =
     // от этой формулы; остальная часть функции (клампы, прочие поля) не тронута,
     // второй писатель plurality (скриптовый эффект "plurality = X" из событий,
     // rva 0x496470) тоже не тронут.
-    { "consciousness_plurality_growth", 0, 0x10C5DE, 1, { 0x03 }, { 0x8B }, true },
+    { "remove_consciousness_plurality_growth", 0, 0x10C5DE, 1, { 0x03 }, { 0x8B }, true },
 
     // Локальный показатель пополнения (FUN_005D7420, ветка LAB_005d74bb):
     // было 1000 (100.0%, "allied or occupied territory" из вики), ставим
@@ -4230,7 +4206,7 @@ static BytePatch EXE_PATCHES[] =
     // узком случае (совпадение провинции с "домашней" для родительской
     // страны) — разделить без добавления ветвления нельзя, это одна и та
     // же инструкция mov eax,imm32.
-    { "allied_reinforce_150", 0, 0x1D74BE, 5,
+    { "army_better_reinforce_on_allied_owned_land", 0, 0x1D74BE, 5,
         { 0xB8, 0xE8, 0x03, 0x00, 0x00 },
         { 0xB8, 0xDC, 0x05, 0x00, 0x00 }, true },
 
@@ -4249,7 +4225,7 @@ static BytePatch EXE_PATCHES[] =
     // всегда, любой стране. Остальной код функции не тронут; показ - чистый
     // UI (создание текстового объекта на карте, ГСЧ и состояние боя не
     // трогает; ветка и так зависела от клиента - у каждого свой игрок).
-    { "combat_loss_popup_all", 0, 0x19CC5D, 2, { 0x74, 0x4A }, { 0x90, 0x90 }, true },
+    { "combat_losses_visible_to_everyone", 0, 0x19CC5D, 2, { 0x74, 0x4A }, { 0x90, 0x90 }, true },
 
     // Окно бюджета: строка "Общие доходы" (textbox total_inc, поле окна
     // +0x160) считалась как FUN_0052b610(...) минус пошлины, т.е. без
@@ -4313,7 +4289,7 @@ static BytePatch EXE_PATCHES[] =
     // rva 0xD0E9D - переход на 0xD0ED4 (пропуск блокировки) теперь
     // происходит всегда, независимо от colonial, а остальные условия
     // функции (владелец/тег и т.д.) продолжают работать как раньше.
-    { "local_supply_factory_ignore_colonial", 0, 0xD0E9D, 2,
+    { "factory_colonial_allow_local_supply", 0, 0xD0E9D, 2,
         { 0x7E, 0x35 },
         { 0xEB, 0x35 }, true },
 
@@ -4385,71 +4361,7 @@ static BytePatch EXE_PATCHES[] =
         { 0x75 },
         { 0xEB }, false },
 
-    // Доля дохода РГО, уходящая владельцам/аристократам - меняет
-    // масштаб формулы в FUN_004ee990 (VA 0x4EE990). Проверено через
-    // Ghidra (decompile_function_by_address на VA 0x4EEA2B):
-    //
-    //   lVar10 = __alldiv(uVar1<<0x1f, uVar1>>1,           ; числитель:  uVar1 * 2^31 (64-бит)
-    //                      uVar5<<0xf,  sign(uVar5)<<0xf | uVar5>>0x11); ; знаменатель: (int64)uVar5 * 2^15
-    //   ; результат = (uVar1/uVar5) * 2^16, дальше клампится сверху
-    //   ; константой (DAT_0125d758/5c) - потолок этим патчем не трогается
-    //
-    // uVar1 - количество нужного типа попов (владельцы/аристократы),
-    // uVar5 - размер занятой рабочей силы (сравнение через отношение,
-    // не фиксированный процент из defines).
-    //
-    // Патч _1/_2 меняет сдвиг числителя 31->17 бит (owners<<0x1F
-    // -> owners<<0x11 в двух половинах 64-битного сдвига). Патчи
-    // _3/_4/_5 убирают сдвиг+маску знаменателя (15 бит) целиком -
-    // uVar5 входит в деление НЕмасштабированным.
-    //
-    // Итог: result = (uVar1/uVar5) * 2^17 - РОВНО в 2 раза (+100%)
-    // больше ванильного (uVar1/uVar5) * 2^16, при том же отношении
-    // владельцы/рабочие. Потолок (кламп) не меняется - там, где
-    // ванильное значение уже упиралось в потолок, эффекта не будет.
-    { "aristocrat_income_share_patch_1", 0, 0xEEA2B, 1, { 0x1F }, { 0x11 }, false },
-    { "aristocrat_income_share_patch_2", 0, 0xEEA2E, 1, { 0x1F }, { 0x11 }, false },
-    { "aristocrat_income_share_patch_3", 0, 0xEEA32, 4,
-        { 0x0F, 0xA4, 0xC2, 0x0F },
-        { 0x90, 0x90, 0x90, 0x90 }, false },
-    { "aristocrat_income_share_patch_4", 0, 0xEEA37, 3,
-        { 0xC1, 0xE0, 0x0F },
-        { 0x90, 0x90, 0x90 }, false },
-    { "aristocrat_income_share_patch_5", 0, 0xEEA3C, 6,
-        { 0x81, 0xE7, 0x00, 0x80, 0xFF, 0xFF },
-        { 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 }, false },
 
-    // Чек-сумма (в углу экрана) уходит на +1 после каждого входа в
-    // партию/лобби, из-за чего она не совпадает с той, что была при
-    // запуске - и в мультиплеере приходится перезапускать клиент,
-    // чтобы чек-суммы у игроков снова совпали. Воспроизводится и на
-    // ванили. Найдено через живое логирование из нашего же DLL +
-    // подтверждено Cheat Engine ("find out what writes to this
-    // address" на адрес аккумулятора чек-суммы):
-    //
-    // Конструктор CBackEndIdler (FUN_005f8110, грузит
-    // interface/backend.gui - экран загрузки между меню и партией,
-    // т.е. срабатывает на каждый вход) в конце безусловно делает
-    // (*(int*)(param_4+0x30))++ - param_4 это тот же объект, чьё
-    // поле +0x30 отдельно читает FUN_006377a0 как итоговое целое
-    // чек-суммы перед тем, как построить текст "Checksum is X".
-    // Кроме этих двух мест (чтение в FUN_006377a0, инкремент здесь)
-    // поле нигде больше не встречается - похоже на посторонний
-    // счётчик загрузок, случайно заведённый в то же поле.
-    //
-    // Убираем ровно "INC EAX" (1 байт), оставляя чтение и запись
-    // того же значения обратно - безобидная no-op пара вместо
-    // инкремента, минимальное вмешательство.
-    //
-    // Выключено по умолчанию (2026-09-24, наше прежнее решение): патч
-    // действительно чинит дрейф ЭТОЙ чек-суммы, но реальная посуточная
-    // сверка хода ("Games out of synch", FUN_00682ec0) от неё не зависит
-    // и всё равно расходится - патч просто маскирует несовместимость
-    // вместо того, чтобы дать лобби честно отказать на входе. Вместо
-    // патча - перезапуск обеих копий игры перед сессией.
-    { "checksum_drift_fix", 0, 0x1F8268, 1,
-        { 0x40 },
-        { 0x90 }, false },
 
     // Permitir declarar la guerra a un súbdito/títere y, opcionalmente,
     // silenciar las razones de bloqueo correspondientes en el tooltip.
@@ -4512,6 +4424,8 @@ static void ParseExtraWhitelist(const char* value)
     }
 }
 
+static void SetExePatchEnabled(const char* name, bool v);
+
 static void ApplySetting(const char* key, const char* value)
 {
     if (_stricmp(key, "PATCH_PARALLEL_DECISIONS") == 0)
@@ -4536,40 +4450,54 @@ static void ApplySetting(const char* key, const char* value)
     if (_stricmp(key, "DEBUG_LOG") == 0)                   { g_settings.debugLog       = v; return; }
     if (_stricmp(key, "ENABLE_BUTTONS") == 0)               { g_settings.buttons        = v; return; }
     if (_stricmp(key, "ENABLE_DECISION_FILTER") == 0)       { g_settings.decisionFilter = v; return; }
-    if (_stricmp(key, "ENABLE_PRICE_DELTA") == 0)           { g_settings.priceDelta     = v; return; }
-    if (_stricmp(key, "ENABLE_POP_DISPLAY") == 0)           { g_settings.popDisplay     = v; return; }
+    if (_stricmp(key, "TRADE_PRICE_DELTA_PERCENTUAL") == 0)           { g_settings.tradePriceDeltaPercentual     = v; return; }
     if (_stricmp(key, "ENABLE_VERSION_LABEL") == 0)         { g_settings.versionLabel   = v; return; }
 
-    if (_stricmp(key, "PATCH_OCCUPIED_REINFORCE_SPLIT") == 0) { g_settings.patchOccupiedReinforceSplit = v; return; }
-    if (_stricmp(key, "PATCH_ALLY_OWNER_CHECK") == 0)          { g_settings.patchAllyOwnerCheck         = v; return; }
-    if (_stricmp(key, "PATCH_ALLY_EMBARK") == 0)                { g_settings.patchAllyEmbark             = v; return; }
-    if (_stricmp(key, "SHOW_ALLY_EMBARKED_TOOLTIP") == 0)       { g_settings.showAllyEmbarkedTooltip     = v; return; }
+    if (_stricmp(key, "ARMY_BETTER_REINFORCE_ON_ALLIED_OWNED_LAND") == 0)
+    {
+        g_settings.armyBetterReinforceOnAlliedOwnedLand = v;
+        SetExePatchEnabled("army_better_reinforce_on_allied_owned_land", v);
+        return;
+    }
+    if (_stricmp(key, "NAVY_ALLOW_USE_ALLY_TRANSPORTS") == 0)                { g_settings.navyAllowUseAllyTransports             = v; return; }
     if (_stricmp(key, "PATCH_CIVILIZE_NULL_CHECK") == 0)       { g_settings.patchCivilizeNullCheck      = v; return; }
     if (_stricmp(key, "PATCH_SUPPLY_SOURCE_NULL_CHECK") == 0)  { g_settings.patchSupplySourceNullCheck  = v; return; }
     if (_stricmp(key, "PATCH_TECH_NULL_CHECK_FIXES") == 0)     { g_settings.patchTechNullCheckFixes     = v; return; }
     if (_stricmp(key, "PATCH_GRAPH_POINT_CLAMP") == 0)         { g_settings.patchGraphPointClamp        = v; return; }
-    if (_stricmp(key, "PATCH_FACTORY_DUMP_SCAN") == 0)         { g_settings.patchFactoryDumpScan        = v; return; }
-    if (_stricmp(key, "PATCH_PROD_LIST_VISIBILITY") == 0)      { g_settings.patchProdListVisibility     = v; return; }
-    if (_stricmp(key, "PATCH_PROD_TYPE_GATE") == 0)            { g_settings.patchProdTypeGate           = v; return; }
+    if (_stricmp(key, "FACTORY_ALLOW_CONSTRUCTION_IN_COLONIAL") == 0)
+    {
+        g_settings.factoryAllowConstructionInColonial = v;
+        SetExePatchEnabled("build_factory_ignore_colonial_1", v);
+        SetExePatchEnabled("build_factory_ignore_colonial_2", v);
+        SetExePatchEnabled("build_factory_button_enable_ignore_colonial", v);
+    if (_stricmp(key, "ALWAYS_ADD_WARGOALS") == 0)              { SetExePatchEnabled("always_add_wargoals", v); return; }
+
+    if (_stricmp(key, "FACTORY_ALLOW_UNCIV_CONSTRUCTION") == 0)
+    {
+        SetExePatchEnabled("build_factory_ignore_uncivilized_button", v);
+        SetExePatchEnabled("build_factory_checklist_uncivilized_own", v);
+        SetExePatchEnabled("build_factory_checklist_uncivilized_other", v);
+        SetExePatchEnabled("build_factory_ignore_uncivilized_can_build", v);
+        return;
+    }
+        return;
+    }
     if (_stricmp(key, "HIDE_UNAVAILABLE_LIMIT_BY_SUPPLY_FACTORIES") == 0) { g_settings.patchHideNoSupplyFactories = v; return; }
-    if (_stricmp(key, "HIDE_NO_SUPPLY_DRY_RUN") == 0)          { g_settings.hideNoSupplyDryRun          = v; return; }
-    if (_stricmp(key, "PATCH_FACTORY_CLOSE_PAYOUT") == 0)      { g_settings.patchFactoryClosePayout     = v; return; }
-    if (_stricmp(key, "PATCH_FACTORY_AUTO_CLOSE_UNPROFITABLE") == 0) { g_settings.patchFactoryAutoClose = v; return; }
-    if (_stricmp(key, "FACTORY_CLOSE_DRY_RUN") == 0)           { g_settings.factoryCloseDryRun          = v; return; }
-    if (_stricmp(key, "PATCH_AI_EXPAND_STAFFING") == 0)        { g_settings.patchAiExpandStaffing       = v; return; }
+    if (_stricmp(key, "FACTORY_REFUND_SAVINGS_ON_CLOSE") == 0)      { g_settings.factoryRefundSavingsOnClose     = v; return; }
+    if (_stricmp(key, "FACTORY_AUTO_CLOSE_UNPROFITABLE") == 0) { g_settings.factoryAutoCloseUnprofitable = v; return; }
+    if (_stricmp(key, "FACTORY_AI_SPAM_FIX") == 0)        { g_settings.factoryAiSpamFix       = v; return; }
     if (_stricmp(key, "PATCH_AI_NAVAL_BASE_LIMIT") == 0)       { g_settings.patchAiNavalBaseLimit       = v; return; }
-    if (_stricmp(key, "PATCH_FACTORY_MIN_WAGE") == 0)          { g_settings.patchFactoryMinWage         = v; return; }
+    if (_stricmp(key, "FACTORY_FORCE_MIN_WAGE") == 0)          { g_settings.factoryForceMinWage         = v; return; }
     if (_stricmp(key, "PATCH_NEEDS_HONEST_UI") == 0)           { g_settings.patchNeedsHonestUi          = v; return; }
-    if (_stricmp(key, "PATCH_FACTORY_PRIORITY_BY_RULE") == 0)  { g_settings.patchFactoryPriorityByRule  = v; return; }
-    if (_stricmp(key, "PATCH_POP_CARD_STRATA_MODIFIERS") == 0) { g_settings.patchPopCardStrataMods      = v; return; }
-    if (_stricmp(key, "PATCH_BUDGET_PAYOUT_BY_NEEDS") == 0)    { g_settings.patchBudgetPayoutByNeeds    = v; return; }
-    if (_stricmp(key, "PATCH_FIX_STRATA_NEEDS_MODIFIERS") == 0) { g_settings.patchFixStrataNeedsMods    = v; return; }
-    if (_stricmp(key, "PROD_TYPE_GATE_ALLOW_ALL") == 0)         { g_settings.prodTypeGateAllowAll        = v; return; }
-    if (_stricmp(key, "PATCH_EXPONENTIAL_PRICE_DELTA") == 0)    { g_settings.patchExponentialPriceDelta  = v; return; }
-    if (_stricmp(key, "PATCH_COMBAT_ROLL") == 0)                { g_settings.patchCombatRoll             = v; return; }
-    if (_stricmp(key, "PATCH_RESERVE_FRONTLINE") == 0)          { g_settings.patchReserveFrontline       = v; return; }
-    if (_stricmp(key, "PATCH_SECOND_LINE_SPLASH") == 0)         { g_settings.patchSecondLineSplash       = v; return; }
-    if (_stricmp(key, "PATCH_CHECKSUM_DIAGNOSTIC") == 0)        { g_settings.patchChecksumDiagnostic     = v; return; }
+    if (_stricmp(key, "FACTORY_AI_FACTORY_PRIORITY_RULESWAP") == 0)  { g_settings.factoryAiFactoryPriorityRuleSwap  = v; return; }
+    if (_stricmp(key, "POP_CARD_NEEDS_AFFECTED_BY_NEEDS_MODIFIERS_FIX") == 0) { g_settings.popCardNeedsAffectedByNeedsModifiersFix      = v; return; }
+    if (_stricmp(key, "POP_BUDGET_PAYOUT_NEEDS_SCALED") == 0)    { g_settings.popBudgetPayoutNeedsScaled    = v; return; }
+    if (_stricmp(key, "POP_FIX_NEEDS_MODIFIERS") == 0) { g_settings.popFixNeedsModifiers    = v; return; }
+    if (_stricmp(key, "FACTORY_COLONIAL_ALLOW_ALL") == 0)         { g_settings.factoryColonialAllowAll        = v; return; }
+    if (_stricmp(key, "TRADE_PRICE_DELTA_EXPONENTIAL") == 0)    { g_settings.tradePriceDeltaExponential  = v; return; }
+    if (_stricmp(key, "COMBAT_ENABLE_ROLL_CHANGES") == 0)                { g_settings.combatEnableRollChanges             = v; return; }
+    if (_stricmp(key, "COMBAT_SECOND_LINE_SUPPORT_UNIT_PRIORITY") == 0)          { g_settings.combatSecondLineSupportUnitPriority       = v; return; }
+    if (_stricmp(key, "COMBAT_SECOND_LINE_DAMAGE_REDIRECT") == 0)         { g_settings.combatSecondLineDamageRedirect       = v; return; }
     if (_stricmp(key, "ENABLE_OOS_LOG") == 0)                   { g_settings.enableOosLog                = v; return; }
     if (_stricmp(key, "ENABLE_RNG_PROBE") == 0)                 { g_settings.enableRngProbe              = v; return; }
     if (_stricmp(key, "ENABLE_STATE_PROBE") == 0)               { g_settings.enableStateProbe            = v; return; }
@@ -4600,13 +4528,13 @@ static void ApplySetting(const char* key, const char* value)
         g_settings.popQuantizeKeepBits = atoi(value);
         return;
     }
-    if (_stricmp(key, "PATCH_MP_CLIENT_SLEEP") == 0)            { g_settings.patchMpClientSleep          = v; return; }
+    if (_stricmp(key, "PATCH_MP_CLIENT_SLEEP") == 0)            { g_settings.removeSleepers          = v; return; }
     if (_stricmp(key, "MP_CLIENT_SLEEP_MS") == 0)
     {
         g_settings.mpClientSleepMs = atoi(value);
         return;
     }
-    if (_stricmp(key, "PATCH_MAIN_LOOP_SLEEP0") == 0)           { g_settings.patchMainLoopSleep0         = v; return; }
+    if (_stricmp(key, "PATCH_MAIN_LOOP_SLEEP0") == 0)           { g_settings.removeSleepers         = v; return; }
     if (_stricmp(key, "MAIN_LOOP_SLEEP_MS") == 0)
     {
         g_settings.mainLoopSleepMs = atoi(value);
@@ -4620,14 +4548,7 @@ static void ApplySetting(const char* key, const char* value)
             g_settings.d3dFpsLimit = 0;
         return;
     }
-    if (_stricmp(key, "PATCH_SKIP_SEL_PROJ") == 0)              { g_settings.patchSkipSelProj            = v; return; }
-    if (_stricmp(key, "PATCH_REUSE_UNIT_VIEW") == 0)            { g_settings.patchReuseUnitView          = v; return; }
-    if (_stricmp(key, "PATCH_SKIP_ARMY_IDLE") == 0)             { g_settings.patchSkipArmyIdle           = v; return; }
-    if (_stricmp(key, "PATCH_REUSE_WINDOWS") == 0)              { g_settings.patchReuseWindows           = v; return; }
     if (_stricmp(key, "PATCH_HIGH_PRIORITY") == 0)              { g_settings.patchHighPriority           = v; return; }
-    if (_stricmp(key, "PATCH_SKIP_NESTED_IDLE") == 0)           { g_settings.patchSkipNestedIdle         = v; return; }
-    if (_stricmp(key, "PATCH_SKIP_CHK_WIN") == 0)               { g_settings.patchSkipChkWin             = v; return; }
-    if (_stricmp(key, "PATCH_CAM_STILL") == 0)                  { g_settings.patchCamStill               = v; return; }
     if (_stricmp(key, "PATCH_COMPRESS_FLAG_CACHE") == 0)          { g_settings.patchCompressFlagCache       = v; return; }
     if (_stricmp(key, "PATCH_PREFETCH_POPS") == 0)                 { g_settings.patchPopPrefetch              = v; return; }
     if (_stricmp(key, "PATCH_CULL_DECISION_CHECKS") == 0)           { g_settings.patchCullDecisionChecks       = v; return; }
@@ -4637,47 +4558,30 @@ static void ApplySetting(const char* key, const char* value)
     if (_stricmp(key, "PATCH_FAST_AI_QUEUE") == 0)                  { g_settings.patchFastAiQueue               = v; return; }
     if (_stricmp(key, "FIX_SFX_MIXER_LAG") == 0)                { g_settings.fixSfxMixerLag              = v; return; }
     if (_stricmp(key, "FIX_ARMY_WINDOW_LAG") == 0)              { g_settings.patchFixArmyWindowLag       = v; return; }
-    if (_stricmp(key, "HIDE_RAW_GOODS_FILTER") == 0)            { g_settings.hideRawGoodsFilter          = v; return; }
-    if (_stricmp(key, "ENABLE_GOODS_ICONS") == 0)               { g_settings.goodsIcons                  = v; return; }
+    if (_stricmp(key, "HIDE_RAW_GOODS_PRODUCTION_FILTER_BUTTONS") == 0)            { g_settings.hideRawGoodsFilter          = v; return; }
+    if (_stricmp(key, "GOODS_ICONS_AS_SEPARATE_FILES") == 0)               { g_settings.goodsIconsAsSeparateFiles                  = v; return; }
     if (_stricmp(key, "FILTER_SHOW_ALL_FACTORIES_IN_STATE") == 0) { g_settings.filterShowAllInState      = v; return; }
-    if (_stricmp(key, "FILTER_PRODUCERS_ONLY") == 0)            { g_settings.filterProducersOnly         = v; return; }
-    if (_stricmp(key, "PLAYER_BUTTONS") == 0)               { g_settings.playerButtons            = v; return; }
+    if (_stricmp(key, "FACTORY_FILTER_BY_PRODUCERS_ONLY") == 0)            { g_settings.factoryFilterByProducersOnly         = v; return; }
+    if (_stricmp(key, "ENABLE_MUSIC_PLAYER") == 0)               { g_settings.enableMusicPlayer            = v; return; }
     if (_stricmp(key, "MUSIC_FAIR_RANDOM") == 0)                { g_settings.musicFairRandom             = v; return; }
     if (_stricmp(key, "ENABLE_EVENT_SOUNDS") == 0)               { g_settings.EventSounds                 = v; return; }
-    if (_stricmp(key, "RESTART_ON_BACKEND_BG") == 0)              { g_settings.restartOnBackendBg           = v; return; }
-    if (_stricmp(key, "TRUE_EXIT_BUTTON") == 0)                     { g_settings.trueExitButton                = v; return; }
+    if (_stricmp(key, "ENABLE_RESTART_GAME_BUTTON") == 0)                     { g_settings.enableRestartGameButton                = v; return; }
     if (_stricmp(key, "ENABLE_MINTING") == 0)                   { g_settings.minting                     = v; return; }
     if (_stricmp(key, "ENABLE_GOODS_CONSUMPTION") == 0)         { g_settings.goodsConsumption            = v; return; }
-    if (_stricmp(key, "GOODS_CONSUMPTION_MARKET_DEMAND") == 0)  { g_settings.goodsConsumptionDemand      = v; return; }
     if (_stricmp(key, "ENABLE_ASSIMILATE_BLOCK") == 0)          { g_settings.assimilateBlock             = v; return; }
-    if (_stricmp(key, "ENABLE_MODS") == 0)                      { g_settings.enableMods                  = v; return; }
+    if (_stricmp(key, "LOAD_DLL_FROM_MOD_FOLDER") == 0)                      { g_settings.loadDllFromModFolder                  = v; return; }
 
     if (_stricmp(key, "COMBAT_ROLL_MIN") == 0) { g_settings.combatRollMin = atoi(value); return; }
     if (_stricmp(key, "COMBAT_ROLL_MAX") == 0) { g_settings.combatRollMax = atoi(value); return; }
 
-    if (_stricmp(key, "PROD_TYPE_GATE_EXTRA_WHITELIST") == 0) { ParseExtraWhitelist(value); return; }
+    if (_stricmp(key, "TRADE_MAX_PRICE_20X_MULTIPLIER") == 0)  { SetExePatchEnabled("trade_max_price_20x_multiplier", v); return; }
+    if (_stricmp(key, "ARMY_FIX_BAD_REINFORCEMENT") == 0)       { SetExePatchEnabled("army_fix_bad_reinforcement", v); return; }
+    if (_stricmp(key, "NAVY_FIX_BAD_REINFORCEMENT") == 0)       { SetExePatchEnabled("navy_fix_bad_reinforcement", v); return; }
+    if (_stricmp(key, "COMBAT_LOSSES_VISIBLE_TO_EVERYONE") == 0) { SetExePatchEnabled("combat_losses_visible_to_everyone", v); return; }
+    if (_stricmp(key, "FACTORY_COLONIAL_ALLOW_LOCAL_SUPPLY") == 0) { SetExePatchEnabled("factory_colonial_allow_local_supply", v); return; }
+    if (_stricmp(key, "FACTORY_COLONIAL_EXTRA_WHITELIST") == 0) { ParseExtraWhitelist(value); return; }
 
-    // Пять частей одного патча (числитель/знаменатель формулы доли
-    // аристократов) должны применяться только вместе - один ключ
-    // на все 5 записей таблицы, а не по одной.
-    if (_stricmp(key, "PATCH_ARISTOCRAT_INCOME_SHARE") == 0)
-    {
-        static const char* const names[] =
-        {
-            "aristocrat_income_share_patch_1",
-            "aristocrat_income_share_patch_2",
-            "aristocrat_income_share_patch_3",
-            "aristocrat_income_share_patch_4",
-            "aristocrat_income_share_patch_5",
-        };
-        for (int n = 0; n < 5; ++n)
-            for (int i = 0; i < EXE_PATCH_COUNT; ++i)
-                if (_stricmp(EXE_PATCHES[i].name, names[n]) == 0)
-                    EXE_PATCHES[i].enabled = v;
-        return;
-    }
-
-    if (_stricmp(key, "PATCH_BUDGET_TOTAL_INCOME_TARIFFS") == 0)
+    if (_stricmp(key, "FIX_BUDGET_TOTAL_INCOME_LABEL") == 0)
     {
         for (int i = 0; i < EXE_PATCH_COUNT; ++i)
             if (_strnicmp(EXE_PATCHES[i].name, "budget_total_income_tariffs_", 28) == 0)
@@ -4710,6 +4614,13 @@ static bool FindExePatchEnabled(const char* name)
     return false;
 }
 
+static void SetExePatchEnabled(const char* name, bool v)
+{
+    for (int i = 0; i < EXE_PATCH_COUNT; ++i)
+        if (_stricmp(EXE_PATCHES[i].name, name) == 0)
+            EXE_PATCHES[i].enabled = v;
+}
+
 static void WriteDefaultSettings(const char* path)
 {
     FILE* f = 0;
@@ -4723,35 +4634,29 @@ static void WriteDefaultSettings(const char* path)
 
     fprintf(f,
         "; Military\n"
-        "PATCH_ALWAYS_ADD_WARGOALS=%d\n"
-        "PATCH_LAND_REINFORCE=%d\n"
-        "PATCH_NAVAL_REINFORCE=%d\n"
-        "PATCH_ALLIED_REINFORCE_150=%d\n"
-        "PATCH_OCCUPIED_REINFORCE_SPLIT=%d\n"
-        "PATCH_ALLY_OWNER_CHECK=%d\n"
-        "PATCH_ALLY_EMBARK=%d\n"
-        "SHOW_ALLY_EMBARKED_TOOLTIP=%d\n"
-        "PATCH_COMBAT_ROLL=%d\n"
+        "ALWAYS_ADD_WARGOALS=%d\n"
+        "ARMY_FIX_BAD_REINFORCEMENT=%d\n"
+        "NAVY_FIX_BAD_REINFORCEMENT=%d\n"
+        "ARMY_BETTER_REINFORCE_ON_ALLIED_OWNED_LAND=%d\n"
+        "NAVY_ALLOW_USE_ALLY_TRANSPORTS=%d\n"
+        "COMBAT_ENABLE_ROLL_CHANGES=%d\n"
         "COMBAT_ROLL_MIN=%d\n"
         "COMBAT_ROLL_MAX=%d\n"
-        "PATCH_COMBAT_LOSS_POPUP_ALL=%d\n"
-        "PATCH_RESERVE_FRONTLINE=%d\n"
-        "PATCH_SECOND_LINE_SPLASH=%d\n"
+        "COMBAT_LOSSES_VISIBLE_TO_EVERYONE=%d\n"
+        "COMBAT_SECOND_LINE_SUPPORT_UNIT_PRIORITY=%d\n"
+        "COMBAT_SECOND_LINE_DAMAGE_REDIRECT=%d\n"
         "\n",
         (int)FindExePatchEnabled("always_add_wargoals"),
-        (int)FindExePatchEnabled("land_reinforce"),
-        (int)FindExePatchEnabled("naval_reinforce"),
-        (int)FindExePatchEnabled("allied_reinforce_150"),
-        (int)g_settings.patchOccupiedReinforceSplit,
-        (int)g_settings.patchAllyOwnerCheck,
-        (int)g_settings.patchAllyEmbark,
-        (int)g_settings.showAllyEmbarkedTooltip,
-        (int)g_settings.patchCombatRoll,
+        (int)FindExePatchEnabled("army_fix_bad_reinforcement"),
+        (int)FindExePatchEnabled("navy_fix_bad_reinforcement"),
+        (int)g_settings.armyBetterReinforceOnAlliedOwnedLand,
+        (int)g_settings.navyAllowUseAllyTransports,
+        (int)g_settings.combatEnableRollChanges,
         g_settings.combatRollMin,
         g_settings.combatRollMax,
-        (int)FindExePatchEnabled("combat_loss_popup_all"),
-        (int)g_settings.patchReserveFrontline,
-        (int)g_settings.patchSecondLineSplash);
+        (int)FindExePatchEnabled("combat_losses_visible_to_everyone"),
+        (int)g_settings.combatSecondLineSupportUnitPriority,
+        (int)g_settings.combatSecondLineDamageRedirect);
 
     char extraWhitelistJoined[MAX_EXTRA_WHITELIST * EXTRA_WHITELIST_NAME_MAX] = "";
     for (int w = 0; w < g_extraWhitelistCount; ++w)
@@ -4763,126 +4668,100 @@ static void WriteDefaultSettings(const char* path)
 
     fprintf(f,
         "; Economic\n"
-        "ENABLE_PRICE_DELTA=%d\n"
-        "PATCH_EXPONENTIAL_PRICE_DELTA=%d\n"
-        "PATCH_MAX_RELATIVE_PRICE=%d\n"
-        "PATCH_BUILD_FACTORY_IGNORE_COLONIAL_1=%d\n"
-        "PATCH_BUILD_FACTORY_IGNORE_COLONIAL_2=%d\n"
-        "PATCH_BUILD_FACTORY_BUTTON_ENABLE_IGNORE_COLONIAL=%d\n"
-        "PATCH_LOCAL_SUPPLY_FACTORY_IGNORE_COLONIAL=%d\n"
-        "PATCH_BUILD_FACTORY_IGNORE_UNCIVILIZED_BUTTON=%d\n"
-        "PATCH_BUILD_FACTORY_CHECKLIST_UNCIVILIZED_OWN=%d\n"
-        "PATCH_BUILD_FACTORY_CHECKLIST_UNCIVILIZED_OTHER=%d\n"
-        "PATCH_BUILD_FACTORY_IGNORE_UNCIVILIZED_CAN_BUILD=%d\n"
-        "PATCH_PROD_TYPE_GATE=%d\n"
-        "PROD_TYPE_GATE_ALLOW_ALL=%d\n"
-        "PROD_TYPE_GATE_EXTRA_WHITELIST=%s\n"
-        "PATCH_FACTORY_CLOSE_PAYOUT=%d\n"
-        "PATCH_FACTORY_AUTO_CLOSE_UNPROFITABLE=%d\n"
-        "FACTORY_CLOSE_DRY_RUN=%d\n"
-        "PATCH_AI_EXPAND_STAFFING=%d\n"
-        "PATCH_FACTORY_MIN_WAGE=%d\n"
-        "PATCH_NEEDS_HONEST_UI=%d\n"
-        "PATCH_FACTORY_PRIORITY_BY_RULE=%d\n"
-        "PATCH_POP_CARD_STRATA_MODIFIERS=%d\n"
-        "PATCH_BUDGET_PAYOUT_BY_NEEDS=%d\n"
-        "PATCH_FIX_STRATA_NEEDS_MODIFIERS=%d\n"
+        "TRADE_PRICE_DELTA_PERCENTUAL=%d\n"
+        "TRADE_PRICE_DELTA_EXPONENTIAL=%d\n"
+        "TRADE_MAX_PRICE_20X_MULTIPLIER=%d\n"
+        "FACTORY_ALLOW_CONSTRUCTION_IN_COLONIAL=%d\n"
+        "FACTORY_COLONIAL_ALLOW_LOCAL_SUPPLY=%d\n"
+        "FACTORY_ALLOW_UNCIV_CONSTRUCTION=%d\n"
+        "FACTORY_COLONIAL_EXTRA_WHITELIST=%s\n"
+        "FACTORY_REFUND_SAVINGS_ON_CLOSE=%d\n"
+        "FACTORY_AUTO_CLOSE_UNPROFITABLE=%d\n"
+        "FACTORY_AI_SPAM_FIX=%d\n"
+        "FACTORY_FORCE_MIN_WAGE=%d\n"
+        "FACTORY_AI_FACTORY_PRIORITY_RULESWAP=%d\n"
+        "POP_CARD_NEEDS_AFFECTED_BY_NEEDS_MODIFIERS_FIX=%d\n"
+        "POP_BUDGET_PAYOUT_NEEDS_SCALED=%d\n"
+        "POP_FIX_NEEDS_MODIFIERS=%d\n"
+        "ENABLE_MINTING=%d\n"
         "\n",
-        (int)g_settings.priceDelta,
-        (int)g_settings.patchExponentialPriceDelta,
-        (int)FindExePatchEnabled("max_relative_price"),
-        (int)FindExePatchEnabled("build_factory_ignore_colonial_1"),
-        (int)FindExePatchEnabled("build_factory_ignore_colonial_2"),
-        (int)FindExePatchEnabled("build_factory_button_enable_ignore_colonial"),
-        (int)FindExePatchEnabled("local_supply_factory_ignore_colonial"),
+        (int)g_settings.tradePriceDeltaPercentual,
+        (int)g_settings.tradePriceDeltaExponential,
+        (int)FindExePatchEnabled("trade_max_price_20x_multiplier"),
+        (int)g_settings.factoryAllowConstructionInColonial,
+        (int)FindExePatchEnabled("factory_colonial_allow_local_supply"),
         (int)FindExePatchEnabled("build_factory_ignore_uncivilized_button"),
-        (int)FindExePatchEnabled("build_factory_checklist_uncivilized_own"),
-        (int)FindExePatchEnabled("build_factory_checklist_uncivilized_other"),
-        (int)FindExePatchEnabled("build_factory_ignore_uncivilized_can_build"),
-        (int)g_settings.patchProdTypeGate,
-        (int)g_settings.prodTypeGateAllowAll,
         extraWhitelistJoined,
-        (int)g_settings.patchFactoryClosePayout,
-        (int)g_settings.patchFactoryAutoClose,
-        (int)g_settings.factoryCloseDryRun,
-        (int)g_settings.patchAiExpandStaffing,
-        (int)g_settings.patchFactoryMinWage,
-        (int)g_settings.patchNeedsHonestUi,
-        (int)g_settings.patchFactoryPriorityByRule,
-        (int)g_settings.patchPopCardStrataMods,
-        (int)g_settings.patchBudgetPayoutByNeeds,
-        (int)g_settings.patchFixStrataNeedsMods);
+        (int)g_settings.factoryRefundSavingsOnClose,
+        (int)g_settings.factoryAutoCloseUnprofitable,
+        (int)g_settings.factoryAiSpamFix,
+        (int)g_settings.factoryForceMinWage,
+        (int)g_settings.factoryAiFactoryPriorityRuleSwap,
+        (int)g_settings.popCardNeedsAffectedByNeedsModifiersFix,
+        (int)g_settings.popBudgetPayoutNeedsScaled,
+        (int)g_settings.popFixNeedsModifiers,
+        (int)g_settings.minting);
 
     fprintf(f,
         "; UI\n"
         "ENABLE_BUTTONS=%d\n"
         "ENABLE_DECISION_FILTER=%d\n"
-        "ENABLE_POP_DISPLAY=%d\n"
         "ENABLE_VERSION_LABEL=%d\n"
-        "PATCH_PROD_LIST_VISIBILITY=%d\n"
         "HIDE_UNAVAILABLE_LIMIT_BY_SUPPLY_FACTORIES=%d\n"
-        "HIDE_RAW_GOODS_FILTER=%d\n"
+        "HIDE_RAW_GOODS_PRODUCTION_FILTER_BUTTONS=%d\n"
         "FILTER_SHOW_ALL_FACTORIES_IN_STATE=%d\n"
-        "FILTER_PRODUCERS_ONLY=%d\n"
-        "PLAYER_BUTTONS=%d\n"
-        "ENABLE_GOODS_ICONS=%d\n"
+        "FACTORY_FILTER_BY_PRODUCERS_ONLY=%d\n"
+        "ENABLE_MUSIC_PLAYER=%d\n"
+        "GOODS_ICONS_AS_SEPARATE_FILES=%d\n"
+        "FIX_BUDGET_TOTAL_INCOME_LABEL=%d\n"
+        "ENABLE_RESTART_GAME_BUTTON=%d\n"
         "\n",
         (int)g_settings.buttons,
         (int)g_settings.decisionFilter,
-        (int)g_settings.popDisplay,
         (int)g_settings.versionLabel,
-        (int)g_settings.patchProdListVisibility,
         (int)g_settings.patchHideNoSupplyFactories,
         (int)g_settings.hideRawGoodsFilter,
         (int)g_settings.filterShowAllInState,
-        (int)g_settings.filterProducersOnly,
-        (int)g_settings.playerButtons,
-        (int)g_settings.goodsIcons);
+        (int)g_settings.factoryFilterByProducersOnly,
+        (int)g_settings.enableMusicPlayer,
+        (int)g_settings.goodsIconsAsSeparateFiles,
+        (int)FindExePatchEnabled("budget_total_income_tariffs_1"),
+        (int)g_settings.enableRestartGameButton);
 
     fprintf(f,
         "; Miscellaneous\n"
-        "PATCH_CONSCIOUSNESS_PLURALITY_GROWTH=%d\n"
+        "PATCH_REMOVE_CONSCIOUSNESS_PLURALITY_GROWTH=%d\n"
         "PATCH_CIVILIZE_NULL_CHECK=%d\n"
         "PATCH_GRAPH_POINT_CLAMP=%d\n"
-        "PATCH_CHECKSUM_DRIFT_FIX=%d\n"
         "PATCH_ALLOW_UNCIV_TECH_RESEARCH=%d\n"
-        "PATCH_ARISTOCRAT_INCOME_SHARE=%d\n"
         "MUSIC_FAIR_RANDOM=%d\n"
-        "ENABLE_EVENT_SOUNDS=%d\n"
-        "RESTART_ON_BACKEND_BG=%d\n"
-        "TRUE_EXIT_BUTTON=%d\n"
         "PATCH_TECH_NULL_CHECK_FIXES=%d\n"
         "PATCH_SUPPLY_SOURCE_NULL_CHECK=%d\n"
         "PATCH_AI_NAVAL_BASE_LIMIT=%d\n"
-        "ENABLE_MINTING=%d\n"
-        "ENABLE_GOODS_CONSUMPTION=%d\n"
-        "GOODS_CONSUMPTION_MARKET_DEMAND=%d\n"
-        "ENABLE_ASSIMILATE_BLOCK=%d\n"
-        "ENABLE_MODS=%d\n"
-        "PATCH_BUDGET_TOTAL_INCOME_TARIFFS=%d\n"
+        "LOAD_DLL_FROM_MOD_FOLDER=%d\n"
         "\n",
-        (int)FindExePatchEnabled("consciousness_plurality_growth"),
+        (int)FindExePatchEnabled("remove_consciousness_plurality_growth"),
         (int)g_settings.patchCivilizeNullCheck,
         (int)g_settings.patchGraphPointClamp,
-        (int)FindExePatchEnabled("checksum_drift_fix"),
         (int)FindExePatchEnabled("allow_unciv_tech_research"),
-        (int)FindExePatchEnabled("aristocrat_income_share_patch_1"),
         (int)g_settings.musicFairRandom,
-        (int)g_settings.EventSounds,
-        (int)g_settings.restartOnBackendBg,
-        (int)g_settings.trueExitButton,
         (int)g_settings.patchTechNullCheckFixes,
         (int)g_settings.patchSupplySourceNullCheck,
         (int)g_settings.patchAiNavalBaseLimit,
-        (int)g_settings.minting,
-        (int)g_settings.goodsConsumption,
-        (int)g_settings.goodsConsumptionDemand,
-        (int)g_settings.assimilateBlock,
-        (int)g_settings.enableMods,
-        (int)FindExePatchEnabled("budget_total_income_tariffs_1"));
+        (int)g_settings.loadDllFromModFolder);
 
     fprintf(f,
-        "; Stability\n"
+        "; Script Extensions\n"
+        "ENABLE_ASSIMILATE_BLOCK=%d\n"
+        "ENABLE_EVENT_SOUNDS=%d\n"
+        "BUILDING_GOODS_CONSUMPTION=%d\n"
+        "\n",
+        (int)g_settings.assimilateBlock,
+        (int)g_settings.EventSounds,
+        (int)g_settings.goodsConsumption);
+
+    fprintf(f,
+        "; Stability and Performance\n"
         "PATCH_FPU_FORTRESS=%d\n"
         "PATCH_D3D_FPU_PRESERVE=%d\n"
         "PATCH_HEAP_LFH=%d\n"
@@ -4890,20 +4769,12 @@ static void WriteDefaultSettings(const char* path)
         "ENGINE_WORKER_THREADS=%d\n"
         "PATCH_POP_QUANTIZE=%d\n"
         "POP_QUANTIZE_KEEP_BITS=%d\n"
-        "PATCH_MP_CLIENT_SLEEP=%d\n"
-        "MP_CLIENT_SLEEP_MS=%d\n"
-        "PATCH_MAIN_LOOP_SLEEP0=%d\n"
-        "MAIN_LOOP_SLEEP_MS=%d\n"
+        "REMOVE_SLEEPERS=%d\n"
         "PATCH_D3D_NO_VSYNC=%d\n"
         "D3D_FPS_LIMIT=%d\n"
-        "PATCH_SKIP_SEL_PROJ=%d\n"
-        "PATCH_REUSE_UNIT_VIEW=%d\n"
-        "PATCH_SKIP_ARMY_IDLE=%d\n"
-        "PATCH_REUSE_WINDOWS=%d\n"
+        "FIX_SFX_MIXER_LAG=%d\n"
+        "FIX_ARMY_WINDOW_LAG=%d\n"
         "PATCH_HIGH_PRIORITY=%d\n"
-        "PATCH_SKIP_NESTED_IDLE=%d\n"
-        "PATCH_SKIP_CHK_WIN=%d\n"
-        "PATCH_CAM_STILL=%d\n"
         "PATCH_COMPRESS_FLAG_CACHE=%d\n"
         "PATCH_PREFETCH_POPS=%d\n"
         "PATCH_CULL_DECISION_CHECKS=%d\n"
@@ -4913,8 +4784,6 @@ static void WriteDefaultSettings(const char* path)
         "PATCH_FAST_AI_QUEUE=%d\n"
         "PATCH_PARALLEL_DECISIONS=%d\n"
         "PATCH_PARALLEL_EVENTS=%d\n"
-        "FIX_SFX_MIXER_LAG=%d\n"
-        "FIX_ARMY_WINDOW_LAG=%d\n"
         "\n",
         (int)g_settings.patchFpuFortress,
         (int)g_settings.patchD3dFpuPreserve,
@@ -4923,20 +4792,12 @@ static void WriteDefaultSettings(const char* path)
         g_settings.engineWorkerThreads,
         (int)g_settings.patchPopQuantize,
         g_settings.popQuantizeKeepBits,
-        (int)g_settings.patchMpClientSleep,
-        g_settings.mpClientSleepMs,
-        (int)g_settings.patchMainLoopSleep0,
-        g_settings.mainLoopSleepMs,
+        (int)g_settings.removeSleepers,
         (int)g_settings.patchD3dNoVsync,
         g_settings.d3dFpsLimit,
-        (int)g_settings.patchSkipSelProj,
-        (int)g_settings.patchReuseUnitView,
-        (int)g_settings.patchSkipArmyIdle,
-        (int)g_settings.patchReuseWindows,
+        (int)g_settings.fixSfxMixerLag,
+        (int)g_settings.patchFixArmyWindowLag,
         (int)g_settings.patchHighPriority,
-        (int)g_settings.patchSkipNestedIdle,
-        (int)g_settings.patchSkipChkWin,
-        (int)g_settings.patchCamStill,
         (int)g_settings.patchCompressFlagCache,
         (int)g_settings.patchPopPrefetch,
         (int)g_settings.patchCullDecisionChecks,
@@ -4945,22 +4806,17 @@ static void WriteDefaultSettings(const char* path)
         (int)g_settings.patchPrefetchAiRelations,
         (int)g_settings.patchFastAiQueue,
         g_settings.patchParallelDecisions,
-        g_settings.patchParallelEvents,
-        (int)g_settings.fixSfxMixerLag,
-        (int)g_settings.patchFixArmyWindowLag);
+        g_settings.patchParallelEvents);
 
     fprintf(f,
         "; Diagnostics\n"
         "ENABLE_LOG=%d\n"
         "DEBUG_LOG=%d\n"
-        "PATCH_FACTORY_DUMP_SCAN=%d\n"
-        "PATCH_CHECKSUM_DIAGNOSTIC=%d\n"
         "ENABLE_OOS_LOG=%d\n"
         "ENABLE_RNG_PROBE=%d\n"
         "ENABLE_STATE_PROBE=%d\n"
         "ENABLE_CRASH_LOG=%d\n"
         "ENABLE_CRASH_DUMP=%d\n"
-        "HIDE_NO_SUPPLY_DRY_RUN=%d\n"
         "PATCH_STATE_SAVINGS_CAP=%d\n"
         "STATE_SAVINGS_CAP_POUNDS=%d\n"
         "SP_WINDOW_FROM=%s\n"
@@ -4968,14 +4824,11 @@ static void WriteDefaultSettings(const char* path)
         "MONEY_WATCH_TAGS=%s\n",
         (int)g_settings.log,
         (int)g_settings.debugLog,
-        (int)g_settings.patchFactoryDumpScan,
-        (int)g_settings.patchChecksumDiagnostic,
         (int)g_settings.enableOosLog,
         (int)g_settings.enableRngProbe,
         (int)g_settings.enableStateProbe,
         (int)g_settings.enableCrashLog,
         (int)g_settings.enableCrashDump,
-        (int)g_settings.hideNoSupplyDryRun,
         (int)g_settings.patchStateSavingsCap,
         g_settings.stateSavingsCapPounds,
         g_settings.spWindowFrom,
@@ -5386,7 +5239,7 @@ static bool InstallAllyOwnerCheck()
 
 
 // ---------------------------------------------------------------
-// PATCH_ALLY_EMBARK - посадка своей армии на флот постоянного союзника
+// NAVY_ALLOW_USE_ALLY_TRANSPORTS - посадка своей армии на флот постоянного союзника
 // (не только свой флот), как при подходе к морской клетке по маршруту,
 // так и кликом на клетку, где армия уже стоит.
 //
@@ -5447,7 +5300,7 @@ static bool InstallAllyOwnerCheck()
 //
 // ЭКСПЕРИМЕНТАЛЬНО: проверено только статически (Ghidra + сверка byte
 // в byte с диском), вживую посадка на чужой флот не тестировалась -
-// выключено по умолчанию (PATCH_ALLY_EMBARK=0), до подтверждения в игре.
+// выключено по умолчанию (NAVY_ALLOW_USE_ALLY_TRANSPORTS=0), до подтверждения в игре.
 // ---------------------------------------------------------------
 
 static const DWORD RVA_EMBARK_OWNER_HOOK      = 0x1D77A0;  // FUN_005d77a0: mov eax,[ecx+0xc4]; cmp eax,[edi+0xc4]
@@ -5726,7 +5579,7 @@ static void __cdecl OnPhysfsOpenReadFilename(const char* filename)
 {
     __try
     {
-        if (g_settings.patchAllyEmbark && IsV2SavePath(filename))
+        if (g_settings.navyAllowUseAllyTransports && IsV2SavePath(filename))
             InterlockedExchange(&g_embarkRepairApplied, 0);
     }
     __except (EXCEPTION_EXECUTE_HANDLER) { }
@@ -5876,7 +5729,7 @@ static int __cdecl RepairEmbarkedArmyOwner(void* army, int navyOwner)
 {
     __try
     {
-        if (!g_settings.patchAllyEmbark || !army)
+        if (!g_settings.navyAllowUseAllyTransports || !army)
             return -1;
 
         int regs = 0, bad = 0;
@@ -6361,7 +6214,7 @@ static bool InstallAllyEmbark()
 
 
 // ---------------------------------------------------------------
-// SHOW_ALLY_EMBARKED_TOOLTIP - подсказка над кнопкой "Высадить" у
+// NAVY_ALLOW_USE_ALLY_TRANSPORTS - подсказка над кнопкой "Высадить" у
 // флота: если на борту есть чужие (союзные) войска, дописывает к
 // ванильному тексту тег их владельца ("| ALLY: FRA, ENG").
 //
@@ -6369,7 +6222,7 @@ static bool InstallAllyEmbark()
 // (FUN_0078F980, VA 0x78F980 - там же лежат load/unload/attach/detach
 // и решения по текстам, живьём собранные из полутора десятков вызовов
 // с нестандартной "умной строкой" - именно в этом районе раньше уже
-// дважды падала игра при работе над HIDE_RAW_GOODS_FILTER). Вместо
+// дважды падала игра при работе над HIDE_RAW_GOODS_PRODUCTION_FILTER_BUTTONS). Вместо
 // патча байтов - перехват ЦЕЛОГО СЛОТА виртуальной таблицы, тем же
 // приёмом, что уже используется для тултипов VIEWS (см. TOOLTIP_THUNKS/
 // OnTooltip выше): подменяем указатель, зовём оригинал ПЕРВЫМ (никакой
@@ -6402,7 +6255,7 @@ static const int OFF_UNIT_OWNER_RAW       = 0xCC;   // raw CUnit: индекс �
 // v4.43: FUN_0078e820 (тот же класс CSingleUnitButtons, второй vtable,
 // живьём считает LOAD_CAPACITY_LABEL для той же панели) декомпилирован
 // заново - объект, который передаётся в уже проверенный FUN_005dc560
-// (подсчёт посаженных войск, используется и в PATCH_ALLY_EMBARK),
+// (подсчёт посаженных войск, используется и в NAVY_ALLOW_USE_ALLY_TRANSPORTS),
 // получается вызовом слота 0x30 у выбранного юнита, а НЕ 0x2C. Слот
 // 0x2C нигде в уже рабочем коде посадки не используется вовсе - это
 // была непроверенная догадка, вот и причина пустого списка. Заменено.
@@ -6434,7 +6287,7 @@ static LONG g_tooltipHookLogCount = 0;  // v4.56: диагностика - пе�
 
 static void OnUnitButtonsTooltip(void* thisObj, void* retBuf, void* element)
 {
-    if (!g_settings.showAllyEmbarkedTooltip || !thisObj || !retBuf || !element)
+    if (!g_settings.navyAllowUseAllyTransports || !thisObj || !retBuf || !element)
         return;
 
     __try
@@ -7877,22 +7730,7 @@ static bool InstallPopSite(const PopSite& site)
 }
 
 
-static void InstallPopDisplay()
-{
-    Log("PopDisplay: множитель %d", 1 << POP_MULTIPLIER_SHIFT);
 
-    for (int i = 0; i < POP_SITE_COUNT; ++i)
-    {
-        if (POP_SITES[i].enabled)
-            InstallPopSite(POP_SITES[i]);
-    }
-}
-
-
-
-
-// ---------------------------------------------------------------
-// Версия мода в подписи главного меню
 //
 // Проверено в Cheat Engine на живой памяти (декомпиляция путала
 // адреса — между двумя push оказалась ещё mov edi,0xF, а адрес
@@ -8481,7 +8319,7 @@ static bool g_defAiExpandKeySeen = false;
 static int  g_defAiNavalBaseMax = 1;
 static bool g_defAiNavalBaseKeySeen = false;
 // factory_min_wage_per_10000: минимум зарплаты работникам фабрики, фунтов в день
-// на 10000 работников, в тысячных (7 -> 7000). 0 = выкл (PATCH_FACTORY_MIN_WAGE).
+// на 10000 работников, в тысячных (7 -> 7000). 0 = выкл (FACTORY_FORCE_MIN_WAGE).
 static int  g_defMinWageMilli = 7000;
 static bool g_defMinWageKeySeen = false;
 static char g_defMintingFormula[256] = "";
@@ -8603,7 +8441,7 @@ static const char* const AI_NAVAL_DEFINES_BLOCK =
 
 static const char* const MIN_WAGE_DEFINES_BLOCK =
     "\n"
-    "# --- Factory minimum wage (PATCH_FACTORY_MIN_WAGE in v2dll_settings.ini) ---\n"
+    "# --- Factory minimum wage (FACTORY_FORCE_MIN_WAGE in v2dll_settings.ini) ---\n"
     "# Every day a factory pays its workers at least this many pounds per 10000 workers (owners and\n"
     "# slaves are not counted), whether or not the factory is profitable. The wage is paid only out of\n"
     "# the money the factory has (its budget): if the factory has less, it pays what it has, and its\n"
@@ -9501,7 +9339,6 @@ static bool InstallMinting()
 //    на каждое такое здание - см. TradeFlowAppendUsed.
 //    Подсказка над textbox'ом (хук диспетчера подсказок FUN_00606780, общий
 //    с minting_inc) перечисляет здания, товары, количество, цену и итог.
-//    Опционально (GOODS_CONSUMPTION_MARKET_DEMAND, по умолчанию да) то же
 //    количество прибавляется к спросу рынка (вектор +0x218, слот +0x1D8+g
 //    - это "спрос" из формулы цены FUN_00482930: цена тянется к
 //    базовой * спрос / предложение), т.е. государство действительно
@@ -10799,7 +10636,7 @@ static bool InstallGoodsConsumption()
         return true;
     }
 
-    g_consDemand = g_settings.goodsConsumptionDemand;
+    g_consDemand = true;
 
     // Закупка: хук в обновлении рынка (см. BasesPurchaseThunk).
     static const unsigned char BUY_SIG[8] = { 0x8B, 0x4C, 0x24, 0x68, 0x8B, 0x54, 0x24, 0x6C };
@@ -13218,7 +13055,7 @@ static void __stdcall AccChk(LONGLONG t0)
 static int __stdcall WckEnter(DWORD retaddr)
 {
     DWORD rva = ExeRvaOf(retaddr);
-    if (g_settings.patchSkipChkWin && IdleOnThisThread() && rva == 0x283AB6)
+    if (false && IdleOnThisThread() && rva == 0x283AB6)
     {
         InterlockedIncrement(&g_wckSkipN);
         if (IdleOnThisThread())
@@ -14157,7 +13994,7 @@ static void WINAPI HookSleep(DWORD ms)
     DWORD orig = ms;
     DWORD ret = (DWORD)(DWORD_PTR)_ReturnAddress();
     DWORD rva = (g_base && ret >= g_base && ret < g_base + g_imageSize) ? ret - g_base : 0;
-    if (g_settings.patchMpClientSleep && ShouldClampSleep(ms))
+    if (g_settings.removeSleepers && ShouldClampSleep(ms))
     {
         int nms = g_settings.mpClientSleepMs;
         if (nms < 0)
@@ -14444,7 +14281,7 @@ static bool SleepHookModuleUnsafe(HMODULE m)
 
 static void HookSleepOnModule(HMODULE m)
 {
-    if (!m || !g_settings.patchMpClientSleep || SleepHookModuleUnsafe(m))
+    if (!m || !g_settings.removeSleepers || SleepHookModuleUnsafe(m))
         return;
     if (!g_realSleep)
     {
@@ -14590,7 +14427,7 @@ static DWORD WINAPI HookWaitForSingleObject(HANDLE h, DWORD ms)
     DWORD orig = ms;
     DWORD ret = (DWORD)(DWORD_PTR)_ReturnAddress();
     DWORD rva = (g_base && ret >= g_base && ret < g_base + g_imageSize) ? ret - g_base : 0;
-    if (g_settings.patchMpClientSleep && ms != INFINITE && ShouldClampSleep(ms))
+    if (g_settings.removeSleepers && ms != INFINITE && ShouldClampSleep(ms))
     {
         int nms = g_settings.mpClientSleepMs;
         if (nms < 0)
@@ -14714,7 +14551,7 @@ static void __fastcall HookIdleIngame(void* self, void* edx, int arg)
     g_idleDepth++;
     if (g_idleDepth > g_idleDepthMax)
         g_idleDepthMax = g_idleDepth;
-    if (!outer && (g_settings.patchSkipNestedIdle || g_settings.patchFixArmyWindowLag))
+    if (!outer && g_settings.patchFixArmyWindowLag)
     {
         g_idleDepth--;
         return;
@@ -18264,7 +18101,7 @@ __declspec(naked) static void Hook393290()
 static int __stdcall UvOnIdleBrigadeRefresh(void* panel, DWORD retaddr)
 {
     g_uvSkipListTail = 0;
-    if (!g_settings.patchReuseUnitView || !panel)
+    if (!false || !panel)
         return 0;
     if (ExeRvaOf(retaddr) != 0x25418C)
         return 0;
@@ -18828,7 +18665,7 @@ static void* __fastcall HookUnitViewCtor(void* idler, void* edx, void* buf, void
     g_uvOwner = idler;
     UvDropDead();
 
-    if (g_settings.patchReuseUnitView && buf && army && z == 0)
+    if (false && buf && army && z == 0)
     {
         for (int i = 0; i < UV_POOL_MAX; i++)
         {
@@ -18908,7 +18745,7 @@ static void __stdcall HookProvDirty(void* a, int b, void* c)
 static void __stdcall HookSelProj(void* mgr, void* obj130)
 {
     LONGLONG t0 = QpcNow();
-    if (!g_settings.patchSkipSelProj && g_realSelProj)
+    if (!false && g_realSelProj)
         g_realSelProj(mgr, obj130);
     else
         InterlockedIncrement(&g_projSkipN);
@@ -18944,7 +18781,7 @@ static void __fastcall HookIdlerNotify(void* idler, void* edx, void* army)
     if (g_realIdlerNotify)
         g_realIdlerNotify(idler, army);
     g_uvLastIdler = idler;
-    if (g_settings.patchReuseUnitView)
+    if (false)
     {
         UvHideDetailIfMulti(idler);
         __try
@@ -19208,19 +19045,6 @@ static void* __fastcall EvtCreateOrReuse(void* obj, void* edx, void* name, void*
     LONGLONG t0 = QpcNow();
     char key[48];
     ReadStdName(name, key, 48);
-    if (g_settings.patchReuseWindows)
-    {
-        void* cached = WinTake(g_evtGui, key);
-        if (cached)
-        {
-            GuiShowTree(cached);
-            InterlockedIncrement(&g_winReuseN);
-            InterlockedIncrement(&g_evtN);
-            InterlockedExchangeAdd(&g_evtUs, (LONG)QpcUs(t0));
-            return cached;
-        }
-    }
-
     void* r = 0;
     __try
     {
@@ -19379,7 +19203,7 @@ static LONG  g_camLastMoveN = 0;
 
 static void CamStillMaybeSkipDraw(void* idler)
 {
-    if (!g_settings.patchCamStill || !idler)
+    if (!false || !idler)
         return;
     __try
     {
@@ -19712,8 +19536,8 @@ static void InstallWindowFps()
         LogDbg("MapScroll: таймер overlay/input rva 257B60 (ovl=)");
     if (StealToTrampoline(0x2592F0, 5, g_trampCam, sizeof(g_trampCam),
         sigOvl, (void*)HookCam, (void**)&g_realCam, "MapCamera"))
-            LogDbg("MapScroll: таймер camera/view rva 2592F0 (cam=) PATCH_CAM_STILL=%d",
-                (int)g_settings.patchCamStill);
+        LogDbg("MapScroll: timer camera/view rva 2592F0 (cam=)");
+        LogDbg("MapScroll: таймер camera/view rva 2592F0 (cam=)");
 
     static const unsigned char sigMtx[6] = { 0x55, 0x8B, 0xEC, 0x83, 0xE4, 0xF8 };
     if (StealToTrampoline(0x5AE320, 6, g_trampMtx, sizeof(g_trampMtx),
@@ -19817,15 +19641,14 @@ static void InstallArmySelectDiag()
         LogDbg("ArmySelect: таймер CInGameIdler notify rva 26A7F0");
     if (StealToTrampoline(RVA_SEL_PROJ, 6, g_trampSelProj, sizeof(g_trampSelProj),
         sigThis, (void*)HookSelProj, (void**)&g_realSelProj, "SelProjTime"))
-        LogDbg("ArmySelect: таймер mesh selection_projection rva %06X (skip=%d)",
-            RVA_SEL_PROJ, (int)g_settings.patchSkipSelProj);
+        LogDbg("ArmySelect: таймер mesh selection_projection rva %06X (skip=%d)", RVA_SEL_PROJ, 0);
 
     // 3.32 skip 1D4540 не убрал хитч: pick всё ещё 24–65 мс, stall max ~200–280 мс.
     // На клике 3E08E0 каждый раз делает operator new(0x14C) + ctor и вешает
     // проекцию в список отрисовки (крутилка/кольцо). 20 кликов = 20 объектов
     // на кадр. 3.34–3.35: кольцо не оно (pick без него всё равно 20+ мс).
     // 3.36: круги/анимация снова родные. PATCH_SKIP_SEL_PROJ=1 только для отладки.
-    if (g_settings.patchSkipSelProj)
+    if (false)
     {
         unsigned char* p = (unsigned char*)(g_base + 0x1CC5B0);
         unsigned char* tail = (unsigned char*)(g_base + 0x1CCA3B);
@@ -19854,7 +19677,7 @@ static void InstallArmySelectDiag()
 
     // 3.35: vfunc +0x78 = CInGameIdler 26A7F0 каждый клик new(0x320)+CUnitView
     // 398A50 (unitpanel.gui). Одиночная смена: перевязать army на +0x28.
-    if (g_settings.patchReuseUnitView)
+    if (false)
     {
         static const unsigned char sigUv[5] = { 0x55, 0x8B, 0xEC, 0x6A, 0xFF };
         if (StealToTrampoline(0x398A50, 5, g_trampUnitViewCtor, sizeof(g_trampUnitViewCtor),
@@ -20204,7 +20027,7 @@ static bool InstallEngineStability()
     InstallTimerResolution();
 
     // fixSfxMixerLag и patchMpClientSleep независимы; оба могут звать select.
-    if (g_settings.fixSfxMixerLag || g_settings.patchMpClientSleep)
+    if (g_settings.fixSfxMixerLag || g_settings.removeSleepers)
         InstallSelectHook();
 
     if (g_settings.patchHighPriority)
@@ -20235,7 +20058,7 @@ static bool InstallEngineStability()
     if (g_settings.patchFpuFortress)
         InstallMainLoopFpuPin();
 
-    if (g_settings.patchMainLoopSleep0)
+    if (g_settings.removeSleepers)
         InstallMainLoopSleep0();
 
     TryPatchLateModules();
@@ -20246,7 +20069,7 @@ static bool InstallEngineStability()
         (int)g_settings.patchHeapLfh,
         (int)g_settings.patchThreadFpuPin,
         g_settings.engineWorkerThreads,
-        (int)g_settings.patchMainLoopSleep0,
+        (int)g_settings.removeSleepers,
         (int)g_settings.patchD3dNoVsync,
         (int)g_settings.patchHighPriority);
     return true;
@@ -20538,10 +20361,10 @@ static void LoadEventMusicDll()
     typedef void (WINAPI* tSetRestart)(BOOL);
     tSetRestart setRestart = (tSetRestart)GetProcAddress(g_eventMusicModule, "EventMusic_SetRestartOnBackendBg");
     if (!setRestart) setRestart = (tSetRestart)GetProcAddress(g_eventMusicModule, "_EventMusic_SetRestartOnBackendBg@4");
-    if (setRestart) setRestart(g_settings.restartOnBackendBg ? TRUE : FALSE);
+    if (setRestart) setRestart(FALSE);
     else Log("EventMusic: falta EventMusic_SetRestartOnBackendBg");
     BOOL ok = start(g_settings.log ? TRUE : FALSE);
-    Log("EventMusic: DLL cargada, inicio=%d, restart_backend_bg=%d", (int)ok, (int)g_settings.restartOnBackendBg);
+    Log("EventMusic: DLL cargada, inicio=%d", (int)ok);
 }
 
 
@@ -20587,7 +20410,6 @@ static void LoadEventMusicDll()
 //                         +0x188=1, +0x178=0, зов F5750 (выплата - через
 //                         хук выше), вызов ванильных финансов пропускается
 // Если у стейта нет владельцев (CFE20 вернул 0), деньги остаются в
-// фабрике, а не пропадают. FACTORY_CLOSE_DRY_RUN=1 (по умолчанию): ни
 // закрытия, ни выплаты, только строки "[DRY]" в лог.
 // ---------------------------------------------------------------
 
@@ -20633,7 +20455,7 @@ static void FacLog(const char* fmt, ...)
     _vsnprintf_s(msg, sizeof(msg), _TRUNCATE, fmt, ap);
     va_end(ap);
 
-    if (g_settings.factoryCloseDryRun && g_facDryLogged < 400)
+    if (false && g_facDryLogged < 400)
     {
         ++g_facDryLogged;
         Log("%s", msg);
@@ -20778,7 +20600,7 @@ static bool FactoryPayoutAll(void* factory, const char* reason)
             return false;
         }
 
-        if (g_settings.factoryCloseDryRun)
+        if (false)
         {
             char who[64];
             FacDescribe(factory, who, sizeof(who));
@@ -20869,7 +20691,7 @@ static int __cdecl FactoryAutoCloseCheck(void* factory)
             return 0;
 
         char who[64];
-        if (g_settings.factoryCloseDryRun)
+        if (false)
         {
             if (FacSeenFirst(f))
             {
@@ -20985,7 +20807,7 @@ static bool InstallFactoryClose()
 
     bool closeOk = false, counterOk = false, inlineOk = false, financeOk = false;
 
-    if (g_settings.patchFactoryClosePayout)
+    if (g_settings.factoryRefundSavingsOnClose)
     {
         static const unsigned char CLOSE_SIG[6]    = { 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x0C };
         static const unsigned char CLOSE_RESUME[6] = { 0x8B, 0x86, 0x10, 0x02, 0x00, 0x00 };
@@ -21009,7 +20831,7 @@ static bool InstallFactoryClose()
             (void*)&FactoryCounterInlineThunk, "FactoryClose(встроенный счётчик)");
     }
 
-    if (g_settings.patchFactoryAutoClose)
+    if (g_settings.factoryAutoCloseUnprofitable)
     {
         static const unsigned char FIN_SIG[6]    = { 0x55, 0x8B, 0xEC, 0x83, 0xE4, 0xF8 };
         static const unsigned char FIN_RESUME[6] = { 0x64, 0xA1, 0x00, 0x00, 0x00, 0x00 };
@@ -21021,11 +20843,11 @@ static bool InstallFactoryClose()
 
     Log("FactoryClose: установлен (выплата при закрытии=%d, остановка по счётчику=%d/%d, автозакрытие=%d, порог %d дн.)%s",
         (int)closeOk, (int)counterOk, (int)inlineOk, (int)financeOk, g_defFactoryCloseDays,
-        g_settings.factoryCloseDryRun ? " - РЕЖИМ DRY RUN: только лог [DRY], ничего не меняется (FACTORY_CLOSE_DRY_RUN=0 включает)" : "");
+        false ? " - РЕЖИМ DRY RUN: только лог [DRY], ничего не меняется (FACTORY_CLOSE_DRY_RUN=0 включает)" : "");
     return closeOk || counterOk || inlineOk || financeOk;
 }
 
-// Смещения структур движка, общие для PATCH_AI_EXPAND_STAFFING и PATCH_FACTORY_MIN_WAGE.
+// Смещения структур движка, общие для PATCH_AI_EXPAND_STAFFING и FACTORY_FORCE_MIN_WAGE.
 static const int FAC_OFF_EMPLOYEES = 0x128;   // занятые рабочие фабрики
 static const int TYPE_OFF_DEF      = 0x12C;   // тип фабрики -> definition
 static const int DEF_OFF_WORKFORCE = 0x128;   // definition -> workforce (на один уровень)
@@ -21070,7 +20892,7 @@ static DWORD g_aiExpandSkip   = 0;
 static int __cdecl AiExpandAllowed(void* factory)
 {
     int minPct = g_defAiExpandMinStaffing;
-    if (!g_settings.patchAiExpandStaffing || minPct <= 0)
+    if (!g_settings.factoryAiSpamFix || minPct <= 0)
         return 1;
     __try
     {
@@ -21299,7 +21121,7 @@ static bool InstallAiNavalBaseLimit()
 }
 
 // ---------------------------------------------------------------
-// PATCH_FACTORY_MIN_WAGE: фиксированный минимум зарплаты на 10000 работников.
+// FACTORY_FORCE_MIN_WAGE: фиксированный минимум зарплаты на 10000 работников.
 //
 // Карта (Ghidra + дизассемблер, подробно в PATCHES.md 4.11): в FUN_004F4B30
 // зарплата работников X = (есть владельцы-капиталисты в регионе) ?
@@ -21373,7 +21195,7 @@ static long long FacMinWageRaw(unsigned char* f)
 static long long __cdecl FactoryMinWageAdjust(void* factory, unsigned int lo, int hi)
 {
     long long x = ((long long)hi << 32) | (unsigned long long)lo;
-    if (!g_settings.patchFactoryMinWage || g_defMinWageMilli <= 0)
+    if (!g_settings.factoryForceMinWage || g_defMinWageMilli <= 0)
         return x;
     __try
     {
@@ -21432,7 +21254,7 @@ static DWORD g_minWageBudgetResume = 0;
 
 static long long __cdecl FactoryMinWageBudgetExtra(void* factory)
 {
-    if (!g_settings.patchFactoryMinWage || g_defMinWageMilli <= 0)
+    if (!g_settings.factoryForceMinWage || g_defMinWageMilli <= 0)
         return 0;
     __try
     {
@@ -22321,7 +22143,7 @@ static bool InstallNeedsHonestUi()
 
 
 // ---------------------------------------------------------------
-// ENABLE_GOODS_ICONS (v5.21): иконки товаров из отдельных папок.
+// GOODS_ICONS_AS_SEPARATE_FILES (v5.21): иконки товаров из отдельных папок.
 //
 // Вместо правки трёх больших атласов (gfx\interface\resources.dds - обычный размер,
 // resources_big.dds, resources_small.dds; по кадру на товар) в common\goods.txt каждому товару
@@ -23255,7 +23077,7 @@ static HRESULT WINAPI HookD3dxCreateTexMemEx(void* dev, const void* data, UINT s
         if (kind)
             TlsSetValue(g_giTls, 0);
     }
-    if (kind > 0 && kind <= 3 && data && size > 128 && g_settings.goodsIcons && g_giHooksOk)
+    if (kind > 0 && kind <= 3 && data && size > 128 && g_settings.goodsIconsAsSeparateFiles && g_giHooksOk)
     {
         unsigned char* patched = GiComposeAtlas(kind, dev, (const unsigned char*)data, size);
         if (patched)
@@ -23316,7 +23138,7 @@ static bool GiIsStripHandle(void* h)
 // разбираем файл (нужны байтовые отрезки "icon = ..."). Возвращает true для goods.txt.
 static bool GiBeforeOpen(const char* path)
 {
-    if (!g_giHooksOk || !g_settings.goodsIcons || !path)
+    if (!g_giHooksOk || !g_settings.goodsIconsAsSeparateFiles || !path)
         return false;
 
     int kind = 0;
@@ -23401,7 +23223,7 @@ static bool InstallPhysfsOpenReadHook()
     return true;
 }
 
-// ENABLE_GOODS_ICONS. Ничего не пишет в состояние игры - только подменяет картинку.
+// GOODS_ICONS_AS_SEPARATE_FILES. Ничего не пишет в состояние игры - только подменяет картинку.
 static bool InstallGoodsIcons()
 {
     if (!g_giCsInit)
@@ -23444,7 +23266,7 @@ static bool InstallGoodsIcons()
     }
 
     g_giHooksOk = ok;
-    Log("GoodsIcons: %s (ENABLE_GOODS_ICONS; ключ icon = \"<папка>\" в common\\goods.txt)",
+    Log("GoodsIcons: %s (GOODS_ICONS_AS_SEPARATE_FILES; ключ icon = \"<папка>\" в common\\goods.txt)",
         ok ? "установлен" : "НЕ установлен");
     return ok;
 }
@@ -25142,10 +24964,7 @@ static bool Install()
     // постройке без слота (краш у тестера при цивилизации страны, 1842 г.).
     g_settings.patchCivilizeNullCheck = true;
     // 3.57 skip 2859C0 из 282EC0 глушил дневной тик (POP/войны/газеты).
-    g_settings.patchSkipChkWin = false;
-    g_settings.patchCamStill = false;
     // 3.42–3.75 ломали окно бригад. Ваниль + таймеры bb0/rbld/rorg.
-    g_settings.patchReuseUnitView = false;
 
     g_base = (DWORD)GetModuleHandleA(NULL);
     if (!g_base)
@@ -25186,7 +25005,7 @@ static bool Install()
     if (g_settings.patchPopQuantize)
         InstallPopQuantize();
 
-    if (g_settings.patchMpClientSleep)
+    if (g_settings.removeSleepers)
     {
         InstallMpClientSleep();
         InstallWfsoHook();
@@ -25228,18 +25047,18 @@ static bool Install()
     // безусловный.
     InstallExePatches();
 
-    if (g_settings.patchOccupiedReinforceSplit)
+    if (g_settings.armyBetterReinforceOnAlliedOwnedLand)
         InstallOccupiedReinforceSplit();
 
-    if (g_settings.patchAllyOwnerCheck)
+    if (g_settings.armyBetterReinforceOnAlliedOwnedLand)
         InstallAllyOwnerCheck();
 
-    if (g_settings.patchAllyEmbark)
+    if (g_settings.navyAllowUseAllyTransports)
         InstallAllyEmbark();
 
     // Ремонт владельца посаженной союзной армии при загрузке сейва (PATCHES.md §4.2b).
     // PhysfsOpenRead нужен только чтобы обнулять лимит исправлений при открытии .v2.
-    if (g_settings.patchAllyEmbark)
+    if (g_settings.navyAllowUseAllyTransports)
     {
         InstallPhysfsOpenReadHook();
         InstallEmbarkLoadRepair();
@@ -25254,7 +25073,7 @@ static bool Install()
     // InstallFleetCaptureHook) вместо LogEmbarkFleetState, чей
     // fleetObj оказался не тем объектом, что видит панель. См. память
     // project_ally_embark_tooltip.
-    if (g_settings.showAllyEmbarkedTooltip)
+    if (g_settings.navyAllowUseAllyTransports)
     {
         InstallFleetPassengerTooltip();
         InstallFleetCaptureHook();
@@ -25278,7 +25097,6 @@ static bool Install()
     if (g_settings.patchGraphPointClamp)
         InstallGraphPointClamp();
 
-    if (g_settings.patchFactoryDumpScan)
     {
         // В 2.58 сканер временно ловил "Failed to create a graphics device"
         // при запуске - подтверждено A/B тестом (2.58 с широким сканом всех
@@ -25290,10 +25108,10 @@ static bool Install()
         InstallFactoryDumpScan();
     }
 
-    if (g_settings.patchProdListVisibility)
+    if (g_settings.factoryAllowConstructionInColonial)
         InstallProdListVisibilityHook();
 
-    // HIDE_RAW_GOODS_FILTER: скрытие кнопок-фильтров товаров на "raw_"
+    // HIDE_RAW_GOODS_PRODUCTION_FILTER_BUTTONS: скрытие кнопок-фильтров товаров на "raw_"
     // в окне фабрик. v4.04 уронил игру на старте (call-through с
     // угаданной сигнатурой - см. историю у ResolveGoodNameByIndex),
     // v4.07 уронил игру повторно (затёртый EDX в этом же хуке) - обе
@@ -25308,41 +25126,41 @@ static bool Install()
     // байтовым смещением (индекс*20) - пропадала canned_food вместо
     // raw_. Разобрано в раундах 4-5 (см. память
     // project_hide_raw_goods_filter), v4.13 - скрытие включено с
-    // правильным индексом, ini: HIDE_RAW_GOODS_FILTER.
+    // правильным индексом, ini: HIDE_RAW_GOODS_PRODUCTION_FILTER_BUTTONS.
     if (g_settings.hideRawGoodsFilter)
         InstallGoodsFilterPosProbe();
 
-    if (g_settings.filterShowAllInState || g_settings.filterProducersOnly)
+    if (g_settings.filterShowAllInState || g_settings.factoryFilterByProducersOnly)
         InstallFilterShowAllInState();
 
-    if (g_settings.trueExitButton)
+    if (g_settings.enableRestartGameButton)
         InstallMenuCloseObserverHook();
 
-    // PLAYER_BUTTONS: кнопка button_fe_player_next в topbar пропускает
+    // ENABLE_MUSIC_PLAYER: кнопка button_fe_player_next в topbar пропускает
     // играющий трек (см. SetupPlayerButtons).
-    if (g_settings.playerButtons)
+    if (g_settings.enableMusicPlayer)
         InstallPlayerButtons();
 
     // MUSIC_FAIR_RANDOM: честный случайный выбор песни (см. InstallMusicFairRandom).
     if (g_settings.musicFairRandom)
         InstallMusicFairRandom();
 
-    if (g_settings.patchProdTypeGate)
+    if (g_settings.factoryAllowConstructionInColonial)
         InstallProdTypeGateHook();
 
     if (g_settings.patchHideNoSupplyFactories)
         InstallHideNoSupplyFactoriesHook();
 
-    if (g_settings.patchFactoryClosePayout || g_settings.patchFactoryAutoClose)
+    if (g_settings.factoryRefundSavingsOnClose || g_settings.factoryAutoCloseUnprofitable)
         InstallFactoryClose();
 
-    if (g_settings.patchAiExpandStaffing)
+    if (g_settings.factoryAiSpamFix)
         InstallAiExpandStaffing();
 
     if (g_settings.patchAiNavalBaseLimit)
         InstallAiNavalBaseLimit();
 
-    if (g_settings.patchFactoryMinWage)
+    if (g_settings.factoryForceMinWage)
         InstallFactoryMinWage();
 
     // Исправление вылета, без переключателя (как CivilizeNullCheck).
@@ -25351,33 +25169,31 @@ static bool Install()
     if (g_settings.patchNeedsHonestUi)
         InstallNeedsHonestUi();
 
-    if (g_settings.patchFactoryPriorityByRule)
+    if (g_settings.factoryAiFactoryPriorityRuleSwap)
         InstallPriorityByRule();
 
-    if (g_settings.patchFixStrataNeedsMods)
+    if (g_settings.popFixNeedsModifiers)
         InstallFixStrataNeedsMods();
 
-    if (g_settings.patchPopCardStrataMods)
+    if (g_settings.popCardNeedsAffectedByNeedsModifiersFix)
         InstallPopCardStrataMods();
 
-    if (g_settings.patchBudgetPayoutByNeeds)
+    if (g_settings.popBudgetPayoutNeedsScaled)
         InstallBudgetPayoutByNeeds();
 
     if (g_settings.EventSounds)
         LoadEventMusicDll();
 
     // Оба патча целят один и тот же адрес - взаимоисключающе.
-    if (g_settings.priceDelta && g_settings.patchExponentialPriceDelta)
-        Log("PriceDelta: ENABLE_PRICE_DELTA и PATCH_EXPONENTIAL_PRICE_DELTA "
-            "патчат один адрес - применяется только PATCH_EXPONENTIAL_PRICE_DELTA");
+    if (g_settings.tradePriceDeltaPercentual && g_settings.tradePriceDeltaExponential)
+        Log("PriceDelta: TRADE_PRICE_DELTA_PERCENTUAL и TRADE_PRICE_DELTA_EXPONENTIAL "
+            "патчат один адрес - применяется только TRADE_PRICE_DELTA_EXPONENTIAL");
 
-    if (g_settings.patchExponentialPriceDelta)
+    if (g_settings.tradePriceDeltaExponential)
         InstallExponentialPriceDelta();
-    else if (g_settings.priceDelta)
+    else if (g_settings.tradePriceDeltaPercentual)
         InstallPriceDelta();
 
-    if (g_settings.popDisplay)
-        InstallPopDisplay();
 
     if (g_settings.versionLabel)
         InstallVersionLabel();
@@ -25390,7 +25206,7 @@ static bool Install()
     if (g_settings.assimilateBlock)
         InstallAssimilateBlock();
 
-    if (g_settings.goodsIcons)
+    if (g_settings.goodsIconsAsSeparateFiles)
         InstallGoodsIcons();
 
     if (g_settings.patchCompressFlagCache)
@@ -25419,16 +25235,15 @@ static bool Install()
     if (g_settings.patchPrefetchAiRelations)
         RelationPrefetch::InstallAi();
 
-    if (g_settings.patchCombatRoll)
+    if (g_settings.combatEnableRollChanges)
         InstallCombatRoll();
 
-    if (g_settings.patchReserveFrontline)
+    if (g_settings.combatSecondLineSupportUnitPriority)
         InstallReserveFrontline();
 
-    if (g_settings.patchSecondLineSplash)
+    if (g_settings.combatSecondLineDamageRedirect)
         InstallSecondLineSplash();
 
-    if (g_settings.patchChecksumDiagnostic)
     {
         InstallChecksumDiagnostic();
         InstallLobbyEntryHook();
@@ -25446,13 +25261,11 @@ static bool Install()
     }
     else
         Log("ClipboardPaste: no se pudo iniciar el hilo independiente (%lu)", GetLastError());
-    Log("IdleSkipNested: PATCH_SKIP_NESTED_IDLE=%d FIX_ARMY_WINDOW_LAG=%d PATCH_SKIP_CHK_WIN=%d PATCH_CAM_STILL=%d",
-        (int)g_settings.patchSkipNestedIdle, (int)g_settings.patchFixArmyWindowLag,
-        (int)g_settings.patchSkipChkWin, (int)g_settings.patchCamStill);
+    Log("IdleSkipNested: FIX_ARMY_WINDOW_LAG=%d", (int)g_settings.patchFixArmyWindowLag);
 
     // Optional plugin "mod\<Name>\v2dll_mod.dll" of the running mod: last, so
     // they see a fully patched game.
-    if (g_settings.enableMods)
+    if (g_settings.loadDllFromModFolder)
     {
         char modDir[MAX_PATH];
         if (ResolveModFolder(modDir, sizeof(modDir)))
