@@ -40,7 +40,7 @@
 // "у кого-то старая DLL" — сравнить эту строку в логах перед сетевой
 // игрой.
 // CLAUDE МЕНЯЙ ВЕРСИЮ ПРИ КАЖДОЙ ПРАВКЕ ФАЙЛА
-#define MOD_VERSION "5.82"
+#define MOD_VERSION "5.83"
 
 // Настройки ниже читаются из v2dll_settings.ini рядом с exe при
 // каждом запуске игры. Если файла ещё нет, он создаётся со
@@ -20342,16 +20342,59 @@ static bool InstallMpClientSleep()
 }
 
 static HMODULE g_eventMusicModule = 0;
-static void LoadEventMusicDll()
+
+// Carpeta (con "\" final) del modulo indicado; NULL = el .exe del juego.
+static bool EventMusicDirOf(HMODULE mod, wchar_t* out, size_t cap)
 {
     wchar_t path[MAX_PATH] = {};
-    DWORD n = GetModuleFileNameW(NULL, path, MAX_PATH);
-    if (!n || n >= MAX_PATH) { Log("EventMusic: no se pudo obtener la ruta del juego"); return; }
+    DWORD n = GetModuleFileNameW(mod, path, MAX_PATH);
+    if (!n || n >= MAX_PATH) return false;
     wchar_t* slash = wcsrchr(path, L'\\');
-    if (!slash) { Log("EventMusic: ruta del juego no valida"); return; }
-    wcscpy_s(slash + 1, MAX_PATH - (size_t)(slash + 1 - path), L"eventmusic.dll");
-    g_eventMusicModule = LoadLibraryW(path);
-    if (!g_eventMusicModule) { Log("EventMusic: no se pudo cargar eventmusic.dll (error %u)", GetLastError()); return; }
+    if (!slash) return false;
+    *(slash + 1) = 0;
+    wcscpy_s(out, cap, path);
+    return true;
+}
+
+// Intenta cargar eventmusic.dll de la carpeta dada y deja la ruta usada (ANSI) para el log.
+static HMODULE EventMusicTryLoad(const wchar_t* dir, char* usedPath, size_t cap)
+{
+    wchar_t full[MAX_PATH] = {};
+    if (wcslen(dir) + wcslen(L"eventmusic.dll") + 1 >= MAX_PATH) return 0;
+    wcscpy_s(full, dir);
+    wcscat_s(full, L"eventmusic.dll");
+    WideCharToMultiByte(CP_ACP, 0, full, -1, usedPath, (int)cap, 0, 0);
+    usedPath[cap - 1] = 0;
+    return LoadLibraryW(full);
+}
+
+static void LoadEventMusicDll()
+{
+    // Primero junto al .exe; si no esta, junto a esta DLL (carpeta del mod / LOAD_DLL_FROM_MOD_FOLDER).
+    wchar_t exeDir[MAX_PATH] = {}, selfDir[MAX_PATH] = {};
+    bool haveExe = EventMusicDirOf(NULL, exeDir, MAX_PATH);
+    bool haveSelf = g_selfModule && EventMusicDirOf(g_selfModule, selfDir, MAX_PATH);
+    if (!haveExe && !haveSelf) { Log("EventMusic: no se pudo obtener la ruta del juego"); return; }
+
+    char usedPath[MAX_PATH] = {};
+    DWORD firstErr = 0;
+    if (haveExe)
+    {
+        g_eventMusicModule = EventMusicTryLoad(exeDir, usedPath, sizeof(usedPath));
+        if (!g_eventMusicModule) firstErr = GetLastError();
+    }
+    if (!g_eventMusicModule && haveSelf && (!haveExe || _wcsicmp(exeDir, selfDir) != 0))
+    {
+        g_eventMusicModule = EventMusicTryLoad(selfDir, usedPath, sizeof(usedPath));
+        if (!g_eventMusicModule && !firstErr) firstErr = GetLastError();
+    }
+    if (!g_eventMusicModule)
+    {
+        Log("EventMusic: no se pudo cargar eventmusic.dll (error %u, ultima ruta: %s)", firstErr, usedPath);
+        return;
+    }
+    Log("EventMusic: eventmusic.dll cargada desde %s", usedPath);
+
     typedef BOOL (WINAPI* tStart)(BOOL);
     tStart start = (tStart)GetProcAddress(g_eventMusicModule, "EventMusic_Start");
     // En x86, WINAPI decora los exports C como _Nombre@bytes. Acepta también
@@ -20361,8 +20404,9 @@ static void LoadEventMusicDll()
     typedef void (WINAPI* tSetRestart)(BOOL);
     tSetRestart setRestart = (tSetRestart)GetProcAddress(g_eventMusicModule, "EventMusic_SetRestartOnBackendBg");
     if (!setRestart) setRestart = (tSetRestart)GetProcAddress(g_eventMusicModule, "_EventMusic_SetRestartOnBackendBg@4");
+    // FALSE: al cargar backend_bg.dds la musica del juego queda detenida (no se reinicia sola).
     if (setRestart) setRestart(FALSE);
-    else Log("EventMusic: falta EventMusic_SetRestartOnBackendBg");
+    else Log("EventMusic: falta EventMusic_SetRestartOnBackendBg (eventmusic.dll antigua: se usa el comportamiento por defecto)");
     BOOL ok = start(g_settings.log ? TRUE : FALSE);
     Log("EventMusic: DLL cargada, inicio=%d", (int)ok);
 }
@@ -25183,6 +25227,8 @@ static bool Install()
 
     if (g_settings.EventSounds)
         LoadEventMusicDll();
+    else
+        Log("EventMusic: desactivado (ENABLE_EVENT_SOUNDS=0): sin sonido de eventos, mute ni parada en backend_bg");
 
     // Оба патча целят один и тот же адрес - взаимоисключающе.
     if (g_settings.tradePriceDeltaPercentual && g_settings.tradePriceDeltaExponential)

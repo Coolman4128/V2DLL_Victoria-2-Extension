@@ -49,6 +49,10 @@ static void EventMusicLog(const char* fmt, ...)
 }
 
 extern "C" __declspec(dllexport) BOOL WINAPI EventMusic_Start(BOOL enableLogging);
+// La DLL principal (V2TechButton) la llama antes de Start. FALSE (por defecto): al cargar
+// backend_bg.dds la musica del juego se mantiene detenida durante SFX_BACKEND_WINDOW_MS.
+// TRUE: solo se hace un Stop y el juego elige y arranca otra cancion por su cuenta.
+extern "C" __declspec(dllexport) void WINAPI EventMusic_SetRestartOnBackendBg(BOOL restart);
 
 // ---------------------------------------------------------------
 // Carpetas de mods y busqueda de sonidos
@@ -203,6 +207,7 @@ static volatile LONG  g_sfxMuted = 0;            // Ctrl+Shift+M
 static volatile LONG  g_sfxHolds = 0;            // sonidos de evento en curso
 static volatile LONG  g_sfxBackendPending = 0;   // ventana de "parar musica" activa
 static volatile DWORD g_sfxBackendUntil = 0;
+static volatile LONG  g_sfxRestartOnBackend = 0; // EventMusic_SetRestartOnBackendBg
 static bool           g_sfxPausedByUs = false;   // protegido por g_musicLock
 static SRWLOCK        g_musicLock = SRWLOCK_INIT;
 
@@ -313,8 +318,8 @@ static DWORD WINAPI SfxControlThread(LPVOID)
         bool force = false;
 
         bool down = ((GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0) &&
-        ((GetAsyncKeyState(VK_SHIFT)   & 0x8000) != 0) &&
-        ((GetAsyncKeyState('M')        & 0x8000) != 0);
+                    ((GetAsyncKeyState(VK_SHIFT)   & 0x8000) != 0) &&
+                    ((GetAsyncKeyState('M')        & 0x8000) != 0);
         if (down && !prevDown && GameWindowFocused()) {
             LONG nowMuted = g_sfxMuted ? 0 : 1;
             InterlockedExchange(&g_sfxMuted, nowMuted);
@@ -614,8 +619,10 @@ static HANDLE WINAPI SfxCreateFileHook(LPCWSTR f,DWORD acc,DWORD share,LPSECURIT
             if (InterlockedIncrement(&seen) <= 40) EventMusicLog("[SFX] CreateFileW backend: %ls", f);
         }
         if (PathEndsWithI(f, L"backend_bg.dds")) {
-            InterlockedExchange((volatile LONG*)&g_sfxBackendUntil, (LONG)(GetTickCount() + SFX_BACKEND_WINDOW_MS));
-            InterlockedExchange(&g_sfxBackendPending, 1);
+            if (!g_sfxRestartOnBackend) {   // modo "mantener parada": el hilo de control repite el Stop
+                InterlockedExchange((volatile LONG*)&g_sfxBackendUntil, (LONG)(GetTickCount() + SFX_BACKEND_WINDOW_MS));
+                InterlockedExchange(&g_sfxBackendPending, 1);
+            }
             EventMusicLog("[SFX] backend_bg.dds detectado (estado musica=%u)", GameMusicState());
             GameMusicStopIfPlaying();      // primero la musica del juego (aunque este pausada por el evento)
             SfxStopCurrent();              // despues el sonido de evento que este sonando (superevento)
@@ -644,6 +651,12 @@ static void InstallEventPictureHook()
 }
 
 static DWORD WINAPI SfxInstallThread(LPVOID) { InstallEventPictureHook(); return 0; }
+
+extern "C" __declspec(dllexport) void WINAPI EventMusic_SetRestartOnBackendBg(BOOL restart)
+{
+    InterlockedExchange(&g_sfxRestartOnBackend, restart ? 1 : 0);
+    EventMusicLog("[SFX] RestartOnBackendBg=%d", restart ? 1 : 0);
+}
 
 extern "C" __declspec(dllexport) BOOL WINAPI EventMusic_Start(BOOL enableLogging)
 {
