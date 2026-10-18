@@ -36,6 +36,7 @@
 #include "Fork/ViewsBoundary.h"
 #include "Fork/LegacyByteTransaction.h"
 #include "Fork/ExeThreadIatTransaction.h"
+#include "Fork/TbbImportTransaction.h"
 #include "Fork/Win32Memory.h"
 #include "Fork/StartupGate.h"
 #include "minhook/src/HDE/hde32.h"
@@ -12584,7 +12585,7 @@ typedef HRESULT (WINAPI* tD3D9CreateDevice)(void*, UINT, UINT, HWND, DWORD, void
 typedef HRESULT (WINAPI* tD3D9Reset)(void*, void*);
 typedef HRESULT (WINAPI* tD3D9Present)(void*, const void*, const void*, HWND, const void*);
 
-static void TryPatchLateModules();
+static bool TryPatchLateModules();
 static HMODULE WINAPI HookLoadLibraryA(LPCSTR name);
 static HMODULE WINAPI HookLoadLibraryW(LPCWSTR name);
 
@@ -13788,26 +13789,112 @@ __declspec(naked) static void HookTbbInit()
     }
 }
 
-static void HookTbbModule(HMODULE tbb)
+static fork_boundary::TbbImportTransaction g_tbbBeginThreadImport;
+
+static void PublishTbbBeginThreadOriginal(std::uint32_t original)
 {
-    if (!tbb || !g_settings.patchThreadFpuPin)
-        return;
+    // A previously entered wrapper may still forward after a clean rollback.
+    InterlockedExchangePointer((PVOID volatile*)&g_realBeginThreadEx,
+        (PVOID)(DWORD_PTR)original);
+}
 
-    static LONG loggedCt = 0;
-    static LONG loggedBt = 0;
-    static LONG loggedFail = 0;
+static bool ActiveExeTbbInitializeBoundTo(HMODULE tbb)
+{
+    // The pinned EXE imports TBB initialize through this separate IAT slot.
+    // Matching the basename alone cannot select between loaded TBB copies.
+    static const DWORD kTbbInitializeIatRva = 0x88A57C;
+    static const DWORD kTbbInitializeExportRva = 0xF170;
+    const DWORD base = (DWORD)(DWORD_PTR)tbb;
+    if (!tbb || !g_base || g_imageSize < sizeof(DWORD) ||
+        kTbbInitializeIatRva > g_imageSize - sizeof(DWORD) ||
+        base > 0xFFFFFFFFu - kTbbInitializeExportRva ||
+        !ReadableExePatchSpan(kTbbInitializeIatRva, sizeof(DWORD)))
+        return false;
 
-    bool ct = HookIat(tbb, "kernel32.dll", "CreateThread",
-        (void*)HookCreateThread, (void**)&g_realCreateThread);
-    bool bt = HookIat(tbb, "MSVCR100.dll", "_beginthreadex",
-        (void*)HookBeginThreadEx, (void**)&g_realBeginThreadEx);
+    // The transaction authenticates the pinned loaded image before any write;
+    // avoid resolving exports from an unknown candidate during this precheck.
+    const DWORD expected = base + kTbbInitializeExportRva;
+    __try
+    {
+        return *(volatile DWORD*)(DWORD_PTR)(g_base + kTbbInitializeIatRva) == expected;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return false;
+    }
+}
 
-    if (ct && InterlockedCompareExchange(&loggedCt, 1, 0) == 0)
-        Log("TBB: CreateThread перехвачен");
-    if (bt && InterlockedCompareExchange(&loggedBt, 1, 0) == 0)
-        Log("TBB: _beginthreadex перехвачен");
-    if (!ct && !bt && InterlockedCompareExchange(&loggedFail, 1, 0) == 0)
-        Log("TBB: ни CreateThread, ни _beginthreadex в IAT");
+static bool HookTbbModule(HMODULE tbb)
+{
+    if (!tbb)
+        return true;
+
+    // The load wrappers retain their historical broad substring discovery.
+    // A different matched DLL must not consume the one-instance retained ref.
+    if (GetModuleHandleA("tbb.dll") != tbb)
+        return true;
+
+    // Only the accepted cap-zero profile is covered. A positive cap still has
+    // the older independent initialize installer and is unavailable here.
+    if (g_settings.engineWorkerThreads != 0)
+    {
+        static LONG loggedCap = 0;
+        if (InterlockedCompareExchange(&loggedCap, 1, 0) == 0)
+            Log("TBB: positive ENGINE_WORKER_THREADS profile unavailable; initialize not installed");
+        return false;
+    }
+
+    if (!g_settings.patchThreadFpuPin)
+        return true;
+
+    if (!ActiveExeTbbInitializeBoundTo(tbb))
+    {
+        static LONG loggedBinding = 0;
+        if (InterlockedCompareExchange(&loggedBinding, 1, 0) == 0)
+            Log("TBB: active EXE initialize import does not bind the selected loaded tbb.dll");
+        return false;
+    }
+
+    try
+    {
+        const auto backend = fork_boundary::MakeWin32TbbImportBackend(
+            (std::uint32_t)(DWORD_PTR)tbb, fork_boundary::kPinnedTbbImageSize,
+            PublishTbbBeginThreadOriginal);
+        const auto report = g_tbbBeginThreadImport.Run(
+            (std::uint32_t)(DWORD_PTR)tbb,
+            (std::uint32_t)(DWORD_PTR)&HookBeginThreadEx,
+            backend, fork_boundary::PinnedTbbImportExpectation());
+        if (report.state == fork_boundary::TbbIatState::Applied ||
+            report.state == fork_boundary::TbbIatState::AlreadyInstalled)
+        {
+            static LONG loggedSkip = 0;
+            if (report.createThreadImportSkipped &&
+                InterlockedCompareExchange(&loggedSkip, 1, 0) == 0)
+                Log("TBB: CreateThread import absent in pinned module; skipped");
+            if (report.state == fork_boundary::TbbIatState::Applied)
+                Log("TBB: _beginthreadex import installed and verified");
+            return true;
+        }
+        if (report.state != fork_boundary::TbbIatState::Busy)
+        {
+            static LONG loggedState = -1;
+            if (InterlockedExchange(&loggedState, (LONG)report.state) !=
+                (LONG)report.state)
+                Log("TBB: _beginthreadex group unavailable: state=%d tbbRef=%d providerRef=%d originalPublished=%d exposureKnownOrPossible=%d attempted=%d; %s",
+                    (int)report.state, (int)report.tbbReferenceRetained,
+                    (int)report.providerReferenceRetained,
+                    (int)report.originalPublished, (int)report.hookPossiblyExposed,
+                    (int)report.attempted, report.reason.c_str());
+        }
+        return false;
+    }
+    catch (const std::bad_alloc&)
+    {
+        static LONG loggedAllocation = 0;
+        if (InterlockedCompareExchange(&loggedAllocation, 1, 0) == 0)
+            Log("TBB: _beginthreadex group unavailable: allocation failed");
+        return false;
+    }
 }
 
 static void HookTbbInitOnExe()
@@ -13924,14 +14011,14 @@ static bool InstallExeThreadIatQuartet()
     }
 }
 
-static void TryPatchLateModules()
+static bool TryPatchLateModules()
 {
     HMODULE exe = GetModuleHandleA(NULL);
 
     if (g_settings.patchThreadFpuPin)
     {
         if (!InstallExeThreadIatQuartet())
-            return;
+            return false;
     }
 
     HMODULE d3d9 = GetModuleHandleA("d3d9.dll");
@@ -13951,10 +14038,12 @@ static void TryPatchLateModules()
     HMODULE tbb = GetModuleHandleA("tbb.dll");
     if (tbb)
     {
-        HookTbbModule(tbb);
+        if (!HookTbbModule(tbb))
+            return false;
         HookTbbInitOnExe();
     }
 
+    return true;
 }
 
 static bool NameHasTbbA(const char* name)
@@ -20302,7 +20391,11 @@ static bool InstallEngineStability()
     if (g_settings.removeSleepers)
         InstallMainLoopSleep0();
 
-    TryPatchLateModules();
+    if (!TryPatchLateModules())
+    {
+        Log("Engine: late import installation unavailable; later installers skipped; earlier effects may remain");
+        return false;
+    }
 
     Log("Engine: FPU=%d D3D=%d LFH=%d threadPin=%d tbbCap=%d sleep0=%d noVsync=%d prio=%d",
         (int)g_settings.patchFpuFortress,

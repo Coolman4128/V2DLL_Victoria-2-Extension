@@ -99,13 +99,13 @@ def main() -> None:
         raise SystemExit(f"source quartet hook order/transaction call changed: {quartet_order}")
     stability = block(source, r"^static bool InstallEngineStability\(\)\s*$")
     if not (stability.find("InstallExeThreadIatQuartet()") <
-            stability.find("InstallMainLoopFpuPin();") < stability.find("TryPatchLateModules();")) or \
+            stability.find("InstallMainLoopFpuPin();") < stability.find("if (!TryPatchLateModules())")) or \
        "return false;" not in stability[stability.find("InstallExeThreadIatQuartet()"):stability.find("InstallMainLoopFpuPin();")]:
         raise SystemExit("stability quartet abort/order changed")
-    late = block(source, r"^static void TryPatchLateModules\(\)\s*$")
+    late = block(source, r"^static bool TryPatchLateModules\(\)\s*$")
     if not (late.find("if (!InstallExeThreadIatQuartet())") <
             late.find('GetModuleHandleA("d3d9.dll")') < late.find('GetModuleHandleA("tbb.dll")')) or \
-       "return;" not in late[late.find("if (!InstallExeThreadIatQuartet())"):late.find('GetModuleHandleA("d3d9.dll")')]:
+       "return false;" not in late[late.find("if (!InstallExeThreadIatQuartet())"):late.find('GetModuleHandleA("d3d9.dll")')]:
         raise SystemExit("late quartet deferral/order changed")
 
     vcvars = Path(r"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvarsall.bat")
