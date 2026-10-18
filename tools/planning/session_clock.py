@@ -111,6 +111,36 @@ def check_session(data, family, session_id, now):
     start = datetime.fromisoformat(session["started_utc"])
     if start.tzinfo is None or now < start:
         raise ValueError("Invalid or reversed session clock; reconcile it")
+
+    if session.get("ended_utc") is not None:
+        ended = datetime.fromisoformat(session["ended_utc"])
+        if ended.tzinfo is None or ended < start or now < ended:
+            raise ValueError("Invalid or reversed session clock; reconcile it")
+        elapsed = session.get("actual_minutes")
+        if elapsed is None:
+            elapsed = (ended - start).total_seconds() / 60
+        family_start = record.get("original_started_utc")
+        family_elapsed = None
+        if family_start:
+            family_elapsed = max(
+                0.0,
+                (ended - datetime.fromisoformat(family_start)).total_seconds() / 60,
+            )
+        return {
+            "state": "SESSION_CLOSED",
+            "family": family,
+            "session_id": session_id,
+            "estimate_minutes": session["estimate_minutes"],
+            "session_elapsed_minutes": round(elapsed, 3),
+            "family_wall_elapsed_minutes": round(family_elapsed, 3) if family_elapsed is not None else None,
+            "independent_review_due": False,
+            "scope_reduction_due": False,
+            "post_session_review_pending": bool(
+                session.get("post_session_review_required") and not session.get("post_session_review")
+            ),
+            "hard_deadline": None,
+        }
+
     elapsed = (now - start).total_seconds() / 60
     has_independent_review = bool(session.get("reviews") or session.get("post_session_review"))
     independent_review_due = elapsed > 120 and not has_independent_review
@@ -134,6 +164,7 @@ def check_session(data, family, session_id, now):
         "family_wall_elapsed_minutes": round(family_elapsed, 3) if family_elapsed is not None else None,
         "independent_review_due": independent_review_due,
         "scope_reduction_due": scope_reduction_due,
+        "post_session_review_pending": False,
         "hard_deadline": None,
     }
 

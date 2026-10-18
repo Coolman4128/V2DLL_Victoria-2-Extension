@@ -19,6 +19,7 @@ class SessionClockTests(unittest.TestCase):
     def test_two_hour_review_is_advisory_not_a_deadline(self):
         at_estimate = clock.check_session(self.data, "S02", "S02-r1", self.now + timedelta(minutes=120))
         self.assertEqual(at_estimate["state"], "WORK_CONTINUES")
+        self.assertFalse(at_estimate["post_session_review_pending"])
         over = clock.check_session(self.data, "S02", "S02-r1", self.now + timedelta(minutes=121))
         self.assertEqual(over["state"], "PAUSE_FOR_INDEPENDENT_REVIEW")
         self.assertTrue(over["independent_review_due"])
@@ -34,12 +35,22 @@ class SessionClockTests(unittest.TestCase):
         finished = clock.finish_session(self.data, "S02", "S02-r1", "Completed setup rapidly.",
             "Review timing and scope before next session", self.now + timedelta(minutes=20))
         self.assertEqual(finished["state"], "POST_SESSION_REVIEW_REQUIRED")
+        closed = clock.check_session(self.data, "S02", "S02-r1", self.now + timedelta(minutes=90))
+        self.assertEqual(closed["state"], "SESSION_CLOSED")
+        self.assertEqual(closed["session_elapsed_minutes"], 20.0)
+        self.assertEqual(closed["family_wall_elapsed_minutes"], 20.0)
+        self.assertTrue(closed["post_session_review_pending"])
+        with self.assertRaises(ValueError):
+            clock.check_session(self.data, "S02", "S02-r1", self.now + timedelta(minutes=19))
         with self.assertRaises(ValueError):
             clock.start_session(self.data, "S02", "S02-r2", 30, "Next scope", self.now + timedelta(minutes=21))
         clock.record_post_session_review(self.data, "S02", "S02-r1", "independent reviewer",
             "Reused setup caused the fast result; native runtime work remains separate.",
             "Preflight and file inspection took little time; retain a separate estimate for runtime work.",
             self.now + timedelta(minutes=25))
+        closed_after_review = clock.check_session(self.data, "S02", "S02-r1", self.now + timedelta(minutes=90))
+        self.assertEqual(closed_after_review["state"], "SESSION_CLOSED")
+        self.assertFalse(closed_after_review["post_session_review_pending"])
         self.assertEqual(clock._get_session(self.data, "S02", "S02-r1")[1]["next_scope"],
             "Review timing and scope before next session")
         next_session = clock.start_session(self.data, "S02", "S02-r2", 30,
