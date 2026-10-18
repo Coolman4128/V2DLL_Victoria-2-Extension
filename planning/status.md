@@ -1,8 +1,12 @@
 # Execution status
 
+## Active packet — P00 (2026-10-18)
+
+State: BLOCKED / INCOMPLETE — no timing samples; native Windows app control is unavailable in this CUA session. Family P00 started 2026-10-18T12:50:54.264670Z; authorized cap 120 minutes; hard deadline 2026-10-18T14:50:54.264670Z. At this checkpoint (2026-10-18T12:55:24Z), elapsed 4m30s, about 115m30s remained. Persistent ledger: `%LOCALAPPDATA%/V2DLLFork/P00/budget-ledger.json`. The original game process launched for preflight was closed normally; no campaign was advanced or saved. Resume only this family before its original deadline when native UI controls are available. S02 remains exhausted; modified-build sessions remain closed.
+
 ## Controlling current state — 2026-10-18 plan repair
 
-**Execution is stopped. S02/R02: BUDGET EXHAUSTED / INCOMPLETE**, more than ten cumulative wall-clock hours from 2026-10-17 20:09:43 EDT through R02w. No next continuation is authorized. New [execution control](execution-control.md) supersedes older resume/reserve instructions throughout this file. The next eligible independent execution packet is [P00](sessions/P00.md), original-game HPM speed measurement; it is NOT STARTED and this plan update does not launch it. Dependent modified-build sessions remain gated.
+**Execution is stopped. S02/R02: BUDGET EXHAUSTED / INCOMPLETE**, more than ten cumulative wall-clock hours from 2026-10-17 20:09:43 EDT through R02w. No next continuation is authorized. New [execution control](execution-control.md) supersedes older resume/reserve instructions throughout this file. P00 was started as the next independent packet and is BLOCKED / INCOMPLETE at the recorded checkpoint because native UI control is unavailable in this CUA session; no timing samples were collected. Its same family clock remains open until 2026-10-18T14:50:54.264670Z. Dependent modified-build sessions remain gated.
 
 S01/S01HPM accepted. Latest delivered R02v commit is `8e1216a080c6335d43faa501dd3b5c234249d8bc`. R02w is uncommitted and incomplete: source/tests/build/export/PDB checks have finite passing evidence; real patched-provider inheritance and final compiled acceptance remain unfinished. Profiles remain Rejected/WITHHELD. HPM speed is NOT MEASURED; requested army features are NOT STARTED; MP stabilization remains frozen awaiting user testing.
 
@@ -32,7 +36,7 @@ At each handoff add/update one row per executed packet: ID, state, actual elapse
 
 | Packet | State | Actual elapsed | Evidence | Next action |
 | --- | --- | --- | --- | --- |
-| P00 | NOT STARTED — next eligible independent execution | 120-minute cumulative cap | [packet](sessions/P00.md) | Original-game HPM speed baseline; plan repair does not launch it |
+| P00 | BLOCKED / INCOMPLETE — native UI unavailable; zero timing samples | 120-minute cumulative family; 115m30s remained at checkpoint | [handoff](handoffs/P00.md), [packet](sessions/P00.md) | Resume the same family before its recorded deadline once native UI control is available |
 | S01 | COMPLETE - independently accepted by root | About 8 active minutes plus unclocked setup; approval wait excluded | [handoff](handoffs/S01.md), [results](results/S01.md) | S02 eligible |
 | S01HPM | COMPLETE - independently accepted by root | 14m58.443s through final manager handoff; root acceptance22:58:55.953 EDT | [handoff](handoffs/S01HPM.md), [results](results/S01HPM.md) | Continue S02 compatibility work; S03 remains closed |
 | S02 | BUDGET EXHAUSTED / INCOMPLETE | More than ten cumulative wall-clock hours through R02w; 120-minute cap exceeded | [control](execution-control.md), [R02w disposition](execution-control.md#s02-incident-and-recovery-state) | No further S02/R02 work without explicit human time grant; modified profiles WITHHELD |
