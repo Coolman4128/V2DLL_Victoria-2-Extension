@@ -23,6 +23,7 @@
     <ClInclude Include="V2DLL_Shared.h" />
     <ClInclude Include="Fork\AddressProfile.h" />
     <ClInclude Include="Fork\LegacyByteTransaction.h" />
+    <ClInclude Include="Fork\ExeThreadIatTransaction.h" />
     <ClInclude Include="Fork\ViewsBoundary.h" />
     <ClInclude Include="Fork\Win32Memory.h" />
     <ClInclude Include="Fork\StartupGate.h" />
@@ -36,6 +37,7 @@
     <ClCompile Include="V2DLL_ModLoader.cpp" />
     <ClCompile Include="Fork\AddressProfile.cpp" />
     <ClCompile Include="Fork\LegacyByteTransaction.cpp" />
+    <ClCompile Include="Fork\ExeThreadIatTransaction.cpp" />
     <ClCompile Include="Fork\ViewsBoundary.cpp" />
     <ClCompile Include="Fork\Win32Memory.cpp" />
     <ClCompile Include="Fork\StartupGate.cpp" />

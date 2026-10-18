@@ -35,6 +35,7 @@
 #include "V2DLL_Shared.h"
 #include "Fork/ViewsBoundary.h"
 #include "Fork/LegacyByteTransaction.h"
+#include "Fork/ExeThreadIatTransaction.h"
 #include "Fork/Win32Memory.h"
 #include "Fork/StartupGate.h"
 #include "minhook/src/HDE/hde32.h"
@@ -13845,16 +13846,92 @@ static void HookTbbInitOnExe()
     }
 }
 
+static fork_boundary::ExeThreadIatTransaction g_exeThreadIatTransaction;
+
+static void PublishExeThreadOriginals(
+    const std::array<std::uint32_t, fork_boundary::kExeThreadImportCount>& original)
+{
+    // Publish every valid provider before the first hook pointer can appear
+    // in the EXE IAT. Keep these pointers after any exposed-hook rollback:
+    // an already-entered wrapper may still be forwarding through one.
+    InterlockedExchangePointer((PVOID volatile*)&g_realCreateThread,
+        (PVOID)(DWORD_PTR)original[0]);
+    InterlockedExchangePointer((PVOID volatile*)&g_realLoadLibraryA,
+        (PVOID)(DWORD_PTR)original[1]);
+    InterlockedExchangePointer((PVOID volatile*)&g_realLoadLibraryW,
+        (PVOID)(DWORD_PTR)original[2]);
+    InterlockedExchangePointer((PVOID volatile*)&g_realGetTickCount,
+        (PVOID)(DWORD_PTR)original[3]);
+}
+
+static bool InstallExeThreadIatQuartet()
+{
+    // The startup gate authenticates the pinned EXE. This further checks the
+    // four current mapped slots belong to its readable image before the
+    // fixed quartet parser/atomic transaction runs. Exclusive native phase
+    // remains a separate requirement for a future authorized profile.
+    for (std::size_t i = 0; i < fork_boundary::kExeThreadImportCount; ++i)
+    {
+        if (g_base && g_imageSize &&
+            ReadableExePatchSpan(fork_boundary::kExeThreadIatRvas[i], sizeof(DWORD)))
+            continue;
+        static LONG loggedSpan = 0;
+        if (InterlockedCompareExchange(&loggedSpan, 1, 0) == 0)
+            Log("FPU: EXE thread import group unavailable: %s IAT span invalid/unreadable",
+                fork_boundary::kExeThreadImportNames[i]);
+        return false;
+    }
+
+    try
+    {
+        const fork_boundary::ExeIatHooks hooks{{
+            (std::uint32_t)(DWORD_PTR)&HookCreateThread,
+            (std::uint32_t)(DWORD_PTR)&HookLoadLibraryA,
+            (std::uint32_t)(DWORD_PTR)&HookLoadLibraryW,
+            (std::uint32_t)(DWORD_PTR)&HookGetTickCount
+        }};
+        const auto backend = fork_boundary::MakeWin32ExeThreadIatBackend(
+            g_base, g_imageSize, PublishExeThreadOriginals);
+        const auto report = g_exeThreadIatTransaction.Run(g_imageSize, hooks, backend);
+        if (report.state == fork_boundary::ExeIatState::Applied)
+        {
+            Log("FPU: EXE thread import quartet applied and verified");
+            return true;
+        }
+        if (report.state == fork_boundary::ExeIatState::AlreadyInstalled)
+            return true;
+        // Busy is a no-wait reentrant/concurrent deferral. The late caller
+        // must not install other dependent module hooks while it is partial.
+        if (report.state != fork_boundary::ExeIatState::Busy)
+        {
+            static LONG loggedState = -1;
+            if (InterlockedExchange(&loggedState, (LONG)report.state) != (LONG)report.state)
+                Log("FPU: EXE thread import quartet unavailable: state=%d published=%d exposureKnownOrPossible=%d attempted=%u hookObservedBeforeRecovery=%u originalVerifiedAfterRecovery=%u; %s",
+                    (int)report.state, (int)report.originalsPublished,
+                    (int)report.anyHookExposed, (unsigned)report.attemptedSlots,
+                    (unsigned)report.hookObservedBeforeRecovery,
+                    (unsigned)report.originalVerifiedAfterRecovery,
+                    report.reason.c_str());
+        }
+        return false;
+    }
+    catch (const std::bad_alloc&)
+    {
+        static LONG loggedAllocation = 0;
+        if (InterlockedCompareExchange(&loggedAllocation, 1, 0) == 0)
+            Log("FPU: EXE thread import group unavailable: allocation failed");
+        return false;
+    }
+}
+
 static void TryPatchLateModules()
 {
     HMODULE exe = GetModuleHandleA(NULL);
 
     if (g_settings.patchThreadFpuPin)
     {
-        HookIat(exe, "kernel32.dll", "CreateThread", (void*)HookCreateThread, (void**)&g_realCreateThread);
-        HookIat(exe, "kernel32.dll", "LoadLibraryA", (void*)HookLoadLibraryA, (void**)&g_realLoadLibraryA);
-        HookIat(exe, "kernel32.dll", "LoadLibraryW", (void*)HookLoadLibraryW, (void**)&g_realLoadLibraryW);
-        HookIat(exe, "kernel32.dll", "GetTickCount", (void*)HookGetTickCount, (void**)&g_realGetTickCount);
+        if (!InstallExeThreadIatQuartet())
+            return;
     }
 
     HMODULE d3d9 = GetModuleHandleA("d3d9.dll");
@@ -20198,8 +20275,6 @@ static bool InstallEngineStability()
     g_fnIsBadReadPtr = SafeIsBadReadPtr;
     PinFpu();
 
-    HMODULE exe = GetModuleHandleA(NULL);
-
     InstallTimerResolution();
 
     // fixSfxMixerLag и patchMpClientSleep независимы; оба могут звать select.
@@ -20212,23 +20287,13 @@ static bool InstallEngineStability()
     if (g_settings.patchHeapLfh)
         InstallHeapLfh();
 
-    HMODULE kernel32 = GetModuleHandleA("kernel32.dll");
-    if (g_settings.patchThreadFpuPin && kernel32)
+    if (g_settings.patchThreadFpuPin)
     {
-        g_realCreateThread = (tCreateThread)GetProcAddress(kernel32, "CreateThread");
-        g_realLoadLibraryA = (tLoadLibraryA)GetProcAddress(kernel32, "LoadLibraryA");
-        g_realLoadLibraryW = (tLoadLibraryW)GetProcAddress(kernel32, "LoadLibraryW");
-        g_realGetTickCount = (tGetTickCount)GetProcAddress(kernel32, "GetTickCount");
-
-        if (HookIat(exe, "kernel32.dll", "CreateThread", (void*)HookCreateThread, (void**)&g_realCreateThread))
-            Log("FPU: CreateThread exe перехвачен");
-        else
-            Log("FPU: CreateThread IAT не найден");
-
-        HookIat(exe, "kernel32.dll", "LoadLibraryA", (void*)HookLoadLibraryA, (void**)&g_realLoadLibraryA);
-        HookIat(exe, "kernel32.dll", "LoadLibraryW", (void*)HookLoadLibraryW, (void**)&g_realLoadLibraryW);
-        if (HookIat(exe, "kernel32.dll", "GetTickCount", (void*)HookGetTickCount, (void**)&g_realGetTickCount))
-            Log("FPU: GetTickCount - отложенный патч TBB/D3D");
+        if (!InstallExeThreadIatQuartet())
+        {
+            Log("Engine: EXE thread import group unavailable; later stability installers skipped; earlier effects may remain");
+            return false;
+        }
     }
 
     if (g_settings.patchFpuFortress)
@@ -25235,7 +25300,11 @@ static bool Install()
         Log("D3D9: vsync снят (PresentationInterval=IMMEDIATE), fps cap=%d",
             g_settings.d3dFpsLimit);
 
-    InstallEngineStability();
+    if (!InstallEngineStability())
+    {
+        Log("Engine stability import group unavailable; later installers skipped; earlier installer effects may remain");
+        return false;
+    }
     InstallArmySelectDiag();
 
     if (g_settings.patchPopQuantize)
