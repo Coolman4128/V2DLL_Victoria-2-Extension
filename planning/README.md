@@ -2,7 +2,7 @@
 
 ## Controlling revision: speed first, estimate-based reviews
 
-The user's 2026-10-18 timing correction supersedes the former hard two-hour cap. **[Execution control](execution-control.md) is mandatory.** Estimates are advisory; each session gets at most one independent review for timing calibration. After two hours, pause for one review and resume the same objective; a session that ends below half estimate gets one closeout review only if it was not already reviewed. Reviews do not create tasks, change scope, or delay continuation. At 2.5 times its estimate, reduce scope as a separate execution decision and continue with a smaller deliverable.
+The user's 2026-10-18 timing correction supersedes the former hard two-hour cap. **[Execution control](execution-control.md) is mandatory.** Estimates are advisory; each whole session gets at most one independent timing review across all its slices and checkpoints. After two hours, pause for one review and resume the same objective; a session that ends below half estimate gets one closeout review only if it was not already reviewed. A review only calibrates future estimates; it never creates work or changes/recommends scope. At 2.5 times its estimate, reduce scope as a separate execution decision and continue with a smaller deliverable.
 
 **Current state:** P00 was skipped at the user's direction and remains NOT MEASURED against its five-run acceptance. S02/R02 remains incomplete and resumes under the new estimate/review process; its prior hard-deadline record is historical only. R02w remains an undeployed partial checkpoint. S03 stays gated until every S02 exit passes.
 
