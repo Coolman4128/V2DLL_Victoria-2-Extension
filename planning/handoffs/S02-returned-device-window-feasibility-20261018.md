@@ -8,4 +8,4 @@
 
 ## Git delivery
 
-Scoped result, handoff and status were delivered in commit `COMMIT_PENDING`; `origin/main` verification follows after push. Only these three documentation paths were staged; unrelated caches were preserved.
+Scoped result, handoff and status were delivered in commit `4934e97c795208769f79a9f494dc0108c7935552`; `git ls-remote origin refs/heads/main` independently matched. Only these three documentation paths were staged; unrelated `tests/fork/__pycache__/` and `tools/planning/__pycache__/` remain untracked and untouched.
