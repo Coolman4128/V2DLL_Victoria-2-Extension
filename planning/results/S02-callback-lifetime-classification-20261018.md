@@ -1,6 +1,6 @@
 # S02 callback and lifetime classification — not proven
 
-Session: `S02-20261018-callback-lifetime-classification`; 20-minute estimate. Exact elapsed and cumulative family wall time are in `%LOCALAPPDATA%/V2DLLFork/S02/budget-ledger.json`. This was a read-only classification of two already-required S02 gates using current source and accepted R02u/v/w evidence. No product edits, tests, build, game/debugger run, deployment or benchmark occurred.
+Session: `S02-20261018-callback-lifetime-classification`; 20-minute estimate, **2.123 minutes actual**, S02 family wall **1172.329 minutes (19.539 hours)** at clock close. The single timing-only review found the short duration reflected a narrow read-only classification, accepted evidence reuse and one targeted source confirmation; similar evidence classifications can use low single-digit-minute estimates, but that does not apply to native/runtime validation. Review details are in `%LOCALAPPDATA%/V2DLLFork/S02/budget-ledger.json`. No product edits, tests, build, game/debugger run, deployment or benchmark occurred.
 
 ## Results
 
