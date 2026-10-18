@@ -24,6 +24,8 @@
     <ClInclude Include="Fork\AddressProfile.h" />
     <ClInclude Include="Fork\ViewsBoundary.h" />
     <ClInclude Include="Fork\Win32Memory.h" />
+    <ClInclude Include="Fork\StartupGate.h" />
+    <ClInclude Include="Fork\StartupIdentity.h" />
     <ClInclude Include="V2ModAPI.h" />
     <ClInclude Include="minhook\include\MinHook.h" />
   </ItemGroup>
@@ -34,6 +36,8 @@
     <ClCompile Include="Fork\AddressProfile.cpp" />
     <ClCompile Include="Fork\ViewsBoundary.cpp" />
     <ClCompile Include="Fork\Win32Memory.cpp" />
+    <ClCompile Include="Fork\StartupGate.cpp" />
+    <ClCompile Include="Fork\StartupIdentity.cpp" />
     <ClCompile Include="minhook\src\buffer.c" />
     <ClCompile Include="minhook\src\HDE\hde32.c" />
     <ClCompile Include="minhook\src\hook.c" />

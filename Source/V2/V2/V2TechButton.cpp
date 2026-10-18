@@ -32,6 +32,7 @@
 #include "lua51_exports.h"
 #include "V2DLL_Shared.h"
 #include "Fork/ViewsBoundary.h"
+#include "Fork/StartupGate.h"
 #include "minhook/src/HDE/hde32.h"
 
 // ---------------------------------------------------------------
@@ -26367,10 +26368,17 @@ static void InstallCrashWatch()
         g_settings.enableCrashDump ? " + v2dll_crash_*.dmp" : " (memory dump выключен: ENABLE_CRASH_DUMP=0)");
 }
 
-BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID)
+BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID reserved)
 {
     if (reason == DLL_PROCESS_ATTACH)
     {
+        const auto startup = fork_startup::CheckProductionStartup(hModule, reserved);
+        if (startup.state != fork_startup::StartupState::Authorized)
+        {
+            fork_startup::ReportStartupDecision(startup);
+            return FALSE;
+        }
+
         DisableThreadLibraryCalls(hModule);
         g_selfModule = hModule;
         InitLogDir();
