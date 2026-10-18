@@ -169,7 +169,7 @@ StartupDecision CheckStartup(const StartupFacts& facts, StartupRead read, void* 
     // No caller assertion or matching signature may promote this to Authorized.
     // This finite checkpoint cannot deploy a partial baseline without remedies.
     return {StartupState::Withheld,
-        "known executable preflight matches; active profile WITHHELD: M0 handler/IAT, "
+        "known executable preflight matches; active profile WITHHELD: M0 crash diagnostics explicitly blocked; "
         "M1 imported/deferred TBB/CRT/D3D, M2/M3 native object/phase and other retained "
         "installer dependencies remain unproved; no startup installer was invoked"};
 }

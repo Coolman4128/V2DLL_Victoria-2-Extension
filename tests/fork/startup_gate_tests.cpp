@@ -323,7 +323,7 @@ void TestReportStartupDecision(const fork_startup::StartupDecision&);
 void TestDisableThreadLibraryCalls(HMODULE);
 void TestInitLogDir();
 void TestInitializeCriticalSection(CRITICAL_SECTION*);
-void TestInstallCrashWatch();
+void TestReportUnavailableCrashWatch();
 void TestPinFpu();
 bool TestInstall();
 void TestLog(const char*, ...);
@@ -344,7 +344,7 @@ extern volatile LONG g_clipboardWorkerThreadId;
 #define DisableThreadLibraryCalls TestDisableThreadLibraryCalls
 #define InitLogDir TestInitLogDir
 #define InitializeCriticalSection TestInitializeCriticalSection
-#define InstallCrashWatch TestInstallCrashWatch
+#define ReportUnavailableCrashWatch TestReportUnavailableCrashWatch
 #define PinFpu TestPinFpu
 #define Install TestInstall
 #define Log TestLog
@@ -357,7 +357,7 @@ extern volatile LONG g_clipboardWorkerThreadId;
 #undef DisableThreadLibraryCalls
 #undef InitLogDir
 #undef InitializeCriticalSection
-#undef InstallCrashWatch
+#undef ReportUnavailableCrashWatch
 #undef PinFpu
 #undef Install
 #undef Log
@@ -371,7 +371,7 @@ ImageFixture* routeImage = nullptr;
 StartupFacts routeFacts{};
 bool routeAuthorizedControl = false;
 unsigned reportCalls = 0, disableCalls = 0, logDirCalls = 0;
-unsigned criticalCalls = 0, crashCalls = 0, fpuCalls = 0, installCalls = 0;
+unsigned criticalCalls = 0, skipCalls = 0, fpuCalls = 0, installCalls = 0;
 unsigned logCalls = 0, threadPostCalls = 0, readyCalls = 0;
 std::vector<const char*> routeOrder;
 
@@ -389,7 +389,7 @@ void TestInitLogDir() { ++logDirCalls; routeOrder.push_back("logdir"); }
 void TestInitializeCriticalSection(CRITICAL_SECTION*) {
     ++criticalCalls; routeOrder.push_back("critical");
 }
-void TestInstallCrashWatch() { ++crashCalls; routeOrder.push_back("crash"); }
+void TestReportUnavailableCrashWatch() { ++skipCalls; routeOrder.push_back("skip"); }
 void TestPinFpu() { ++fpuCalls; routeOrder.push_back("fpu"); }
 bool TestInstall() { ++installCalls; routeOrder.push_back("install"); return true; }
 void TestLog(const char*, ...) { ++logCalls; routeOrder.push_back("log"); }
@@ -411,7 +411,7 @@ BOOL TestPostThreadMessageA(DWORD, UINT, WPARAM, LPARAM) {
 }
 
 void ResetRouteCounters() {
-    reportCalls = disableCalls = logDirCalls = criticalCalls = crashCalls = 0;
+    reportCalls = disableCalls = logDirCalls = criticalCalls = skipCalls = 0;
     fpuCalls = installCalls = logCalls = threadPostCalls = readyCalls = 0;
     routeOrder.clear();
     g_selfModule = reinterpret_cast<HMODULE>(static_cast<std::uintptr_t>(0x1234));
@@ -422,7 +422,7 @@ void ResetRouteCounters() {
 }
 void CheckNoDependentEffects() {
     Check(disableCalls == 0 && logDirCalls == 0 && criticalCalls == 0 &&
-        crashCalls == 0 && fpuCalls == 0 && installCalls == 0 && logCalls == 0 &&
+        skipCalls == 0 && fpuCalls == 0 && installCalls == 0 && logCalls == 0 &&
         threadPostCalls == 0 && readyCalls == 0,
         "rejected/withheld route has zero dependent initialization effects");
     Check(g_selfModule == reinterpret_cast<HMODULE>(static_cast<std::uintptr_t>(0x1234)) &&
@@ -515,10 +515,10 @@ void TestDllMainRejectionRoute() {
         DLL_PROCESS_ATTACH, reinterpret_cast<void*>(1)) == TRUE,
         "test-only Authorized sensitivity control reaches legacy route");
     Check(disableCalls == 1 && logDirCalls == 1 && criticalCalls == 1 &&
-        crashCalls == 1 && fpuCalls == 1 && installCalls == 1 && logCalls == 1 &&
-        readyCalls == 1, "authorized fixture control observes all expected branch effects");
+        skipCalls == 1 && fpuCalls == 1 && installCalls == 1 && logCalls == 1 &&
+        readyCalls == 1, "authorized fixture control observes skip and expected branch effects");
     const std::vector<const char*> expected = {
-        "disable", "logdir", "critical", "crash", "fpu", "install", "log", "ready"
+        "disable", "logdir", "critical", "skip", "fpu", "install", "log", "ready"
     };
     bool sameOrder = routeOrder.size() == expected.size();
     for (std::size_t i = 0; sameOrder && i < expected.size(); ++i)

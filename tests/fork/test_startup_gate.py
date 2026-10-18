@@ -4,6 +4,7 @@ The Win32 harness uses only owned synthetic bytes and mocked downstream startup
 effects. It does not load the fork DLL or inspect/control the game process.
 """
 import argparse
+import ast
 import hashlib
 import os
 import pathlib
@@ -70,7 +71,7 @@ def source_route_checks(source: str) -> None:
     return_false = dllmain.index("return FALSE;", rejection)
     first_old_effect = min(dllmain.index(token, attach) for token in (
         "DisableThreadLibraryCalls(hModule)", "g_selfModule = hModule", "InitLogDir();",
-        "InitializeCriticalSection(&g_logCs)", "InstallCrashWatch();", "PinFpu();",
+        "InitializeCriticalSection(&g_logCs)", "ReportUnavailableCrashWatch();", "PinFpu();",
         "Install();", "Log(", "InterlockedExchange(&g_dllReady, 1)"))
     if not (gate < rejection < return_false < first_old_effect):
         raise SystemExit("production startup gate does not reject before all old attach effects")
@@ -81,12 +82,21 @@ def source_route_checks(source: str) -> None:
         raise SystemExit("startup preflight must be the first PROCESS_ATTACH statement")
     preserved = [
         "DisableThreadLibraryCalls(hModule)", "g_selfModule = hModule", "InitLogDir();",
-        "InitializeCriticalSection(&g_logCs)", "InstallCrashWatch();", "PinFpu();",
+        "InitializeCriticalSection(&g_logCs)", "ReportUnavailableCrashWatch();", "PinFpu();",
         "ok = Install();", "InterlockedExchange(&g_dllReady, 1)"
     ]
     positions = [dllmain.index(token, return_false) for token in preserved]
     if positions != sorted(positions):
         raise SystemExit("authorized attach effects changed their existing relative order")
+    if "InstallCrashWatch();" in dllmain:
+        raise SystemExit("production DllMain must not call the retained private CrashWatch installer")
+    if not re.search(r"ReportUnavailableCrashWatch\(\);\s*PinFpu\(\);", dllmain):
+        raise SystemExit("optional diagnostics skip must immediately precede mandatory PinFpu")
+    if len(re.findall(r"\bInstallCrashWatch\s*\(", source)) != 1:
+        raise SystemExit("original private CrashWatch installer must remain definition-only")
+    for api in ("AddVectoredExceptionHandler", "SetUnhandledExceptionFilter", "SetThreadStackGuarantee"):
+        if re.search(rf"\b{api}\s*\(", dllmain):
+            raise SystemExit(f"DllMain gained a CrashWatch registration bypass: {api}")
     for token in ("DLL_THREAD_ATTACH", "DLL_THREAD_DETACH"):
         if token in dllmain:
             raise SystemExit("thread notification behavior unexpectedly expanded")
@@ -95,13 +105,13 @@ def source_route_checks(source: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-root", type=pathlib.Path,
-        default=pathlib.Path("%LOCALAPPDATA%/V2DLLFork/R02c/startup-contract/run-04"))
+        default=pathlib.Path("%LOCALAPPDATA%/V2DLLFork/R02d/startup-regression"))
     parser.add_argument("--msbuild", default=r"C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe")
     args = parser.parse_args()
     repo = pathlib.Path(__file__).resolve().parents[2]
     local_app_data = os.environ.get("LOCALAPPDATA")
     if not local_app_data:
-        raise SystemExit("LOCALAPPDATA is required for the private R02c build root")
+        raise SystemExit("LOCALAPPDATA is required for the private R02d build root")
     build = pathlib.Path(str(args.build_root).replace("%LOCALAPPDATA%", local_app_data)).resolve()
     if build == repo or repo in build.parents or build.exists():
         raise SystemExit(f"build root must be new and outside the repository: {build}")
@@ -119,7 +129,7 @@ def main() -> None:
     source_route_checks(tech)
     if "return {StartupState::Withheld," not in gate_source or "Authorized" not in gate:
         raise SystemExit("pure positive gate must remain explicitly withheld")
-    if "M0 handler/IAT" not in gate_source or "M1 imported/deferred TBB/CRT/D3D" not in gate_source or "M2/M3" not in gate_source:
+    if "M0 crash diagnostics explicitly blocked;" not in gate_source or "M1 imported/deferred TBB/CRT/D3D" not in gate_source or "M2/M3" not in gate_source:
         raise SystemExit("positive preflight reason must enumerate mandatory withheld groups")
 
     dllmain = function_definition(tech, "BOOL APIENTRY DllMain(HMODULE hModule")
@@ -143,9 +153,10 @@ def main() -> None:
     (build / "source_hashes.txt").write_text(hashes, encoding="utf-8")
     inventory = """R02c routine startup inventory (source symbol/call-order summary)
 
-M0: DllMain PROCESS_ATTACH -> InstallCrashWatch -> InitLogDir, stack guarantee,
-VEH, UEF replacement/IAT hook, signal and invalid-parameter handlers; then PinFpu.
-Both occur before Install and are gated by the first DllMain attach statement.
+M0: DllMain PROCESS_ATTACH -> ReportUnavailableCrashWatch -> PinFpu. Optional
+crash-reporting registrations remain only in the private, unreachable
+InstallCrashWatch definition; the skip logs one explicit blocked-profile reason.
+Mandatory PinFpu remains immediately afterward and before Install.
 
 M1: Install -> InstallEngineStability first. It pins FPU, sets timer resolution,
 may install select/high-priority/LFH hooks, hooks exe CreateThread/LoadLibraryA/W/

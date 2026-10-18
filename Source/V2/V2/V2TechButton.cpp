@@ -26338,6 +26338,8 @@ static void __cdecl CrashOnInvalidParam(
     TerminateProcess(GetCurrentProcess(), 3);
 }
 
+// Dormant legacy diagnostic registration retained for a later supported profile.
+// R02d has no production caller of this private installer or its handlers.
 static void InstallCrashWatch()
 {
     InitLogDir();
@@ -26368,6 +26370,13 @@ static void InstallCrashWatch()
         g_settings.enableCrashDump ? " + v2dll_crash_*.dmp" : " (memory dump выключен: ENABLE_CRASH_DUMP=0)");
 }
 
+static void ReportUnavailableCrashWatch()
+{
+    Log("CrashWatch unavailable (R02d): optional diagnostics blocked; "
+        "registration/provider/lifetime profile unproved; no handlers/IAT/signal changes; "
+        "mandatory PinFpu retained unchanged");
+}
+
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID reserved)
 {
     if (reason == DLL_PROCESS_ATTACH)
@@ -26384,7 +26393,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID reserved)
         InitLogDir();
         InitializeCriticalSection(&g_logCs);
         g_logCsInit = true;
-        InstallCrashWatch();
+        ReportUnavailableCrashWatch();
         PinFpu();
         bool ok = false;
         __try
