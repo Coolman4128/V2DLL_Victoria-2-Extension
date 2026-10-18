@@ -21,6 +21,9 @@
   <ItemGroup>
     <ClInclude Include="lua51_exports.h" />
     <ClInclude Include="V2DLL_Shared.h" />
+    <ClInclude Include="Fork\AddressProfile.h" />
+    <ClInclude Include="Fork\ViewsBoundary.h" />
+    <ClInclude Include="Fork\Win32Memory.h" />
     <ClInclude Include="V2ModAPI.h" />
     <ClInclude Include="minhook\include\MinHook.h" />
   </ItemGroup>
@@ -28,6 +31,9 @@
     <ClCompile Include="V2TechButton.cpp" />
     <ClCompile Include="V2DLL_AssimilateBlock.cpp" />
     <ClCompile Include="V2DLL_ModLoader.cpp" />
+    <ClCompile Include="Fork\AddressProfile.cpp" />
+    <ClCompile Include="Fork\ViewsBoundary.cpp" />
+    <ClCompile Include="Fork\Win32Memory.cpp" />
     <ClCompile Include="minhook\src\buffer.c" />
     <ClCompile Include="minhook\src\HDE\hde32.c" />
     <ClCompile Include="minhook\src\hook.c" />

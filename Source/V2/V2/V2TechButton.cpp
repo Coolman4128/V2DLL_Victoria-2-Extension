@@ -31,6 +31,8 @@
 
 #include "lua51_exports.h"
 #include "V2DLL_Shared.h"
+#include "Fork/ViewsBoundary.h"
+#include "minhook/src/HDE/hde32.h"
 
 // ---------------------------------------------------------------
 // Настройки сборки
@@ -7618,6 +7620,13 @@ static bool InstallFactoryDumpScan()
 // иначе она молча не проходит.
 bool PatchSlot(DWORD rvaVtable, int slotIndex, void* replacement, void** outOriginal)
 {
+    // R02b: optional VIEWS callbacks have no supported production profile.
+    // Reject before address access, protection changes or original publication.
+    if (fork_boundary::BlocksLegacyViewsSlot(rvaVtable, slotIndex) ||
+        (outOriginal && fork_boundary::BlocksLegacyViewsWrite(
+            (DWORD)(DWORD_PTR)outOriginal - g_base, sizeof(*outOriginal))))
+        return false;
+
     void** slot = (void**)(g_base + rvaVtable) + slotIndex;
 
     DWORD oldProtect = 0;
@@ -14715,14 +14724,46 @@ static void __fastcall HookIdleIngame(void* self, void* edx, int arg)
 bool StealToTrampoline(DWORD rva, unsigned steal, unsigned char* tramp, int trampSize,
     const unsigned char* expect, void* hook, void** orig, const char* tag)
 {
-    unsigned char* src = (unsigned char*)(g_base + rva);
-    if (steal < 5 || steal > 16 || trampSize < (int)(steal + 5))
+    // Reserve VIEWS for every destination exposed by this legacy write API.
+    if (fork_boundary::BlocksLegacyViewsWrite(rva, steal) ||
+        (tramp && trampSize > 0 && fork_boundary::BlocksLegacyViewsWrite(
+            (DWORD)(DWORD_PTR)tramp - g_base, (unsigned)trampSize)) ||
+        (orig && fork_boundary::BlocksLegacyViewsWrite(
+            (DWORD)(DWORD_PTR)orig - g_base, sizeof(*orig))))
         return false;
+
+    // A missing signature is never permission to patch an unknown instruction span.
+    if (!g_base || !g_imageSize || !expect || !tramp || !hook || !orig ||
+        steal < 5 || steal > 16 || trampSize < (int)(steal + 5) ||
+        rva >= g_imageSize || steal > g_imageSize - rva)
+    {
+        Log("%s: skipped (invalid trampoline contract) rva %06X", tag ? tag : "Trampoline", rva);
+        return false;
+    }
+    unsigned char* src = (unsigned char*)(g_base + rva);
     if (memcmp(src, expect, steal) != 0)
     {
         Log("%s: сигнатура не совпала rva %06X (%02X %02X %02X %02X)",
             tag, rva, src[0], src[1], src[2], src[3]);
         return false;
+    }
+
+    // Raw copies cannot preserve PC-relative operands or partial instructions.
+    // Decode a padded local copy so a truncated final opcode cannot overread
+    // the caller's expected-byte buffer. This does not establish the entry ABI.
+    unsigned char decodedBytes[32] = {};
+    memcpy(decodedBytes, expect, steal);
+    for (unsigned offset = 0; offset < steal; )
+    {
+        hde32s instruction = {};
+        unsigned length = hde32_disasm(decodedBytes + offset, &instruction);
+        if (!length || length > 15 || (instruction.flags & (F_ERROR | F_RELATIVE)) || length > steal - offset)
+        {
+            Log("%s: skipped (relative or incomplete raw instruction span) rva %06X",
+                tag ? tag : "Trampoline", rva);
+            return false;
+        }
+        offset += length;
     }
 
     DWORD old = 0;
@@ -19537,7 +19578,6 @@ static void InstallWindowFps()
     if (StealToTrampoline(0x2592F0, 5, g_trampCam, sizeof(g_trampCam),
         sigOvl, (void*)HookCam, (void**)&g_realCam, "MapCamera"))
         LogDbg("MapScroll: timer camera/view rva 2592F0 (cam=)");
-        LogDbg("MapScroll: таймер camera/view rva 2592F0 (cam=)");
 
     static const unsigned char sigMtx[6] = { 0x55, 0x8B, 0xEC, 0x83, 0xE4, 0xF8 };
     if (StealToTrampoline(0x5AE320, 6, g_trampMtx, sizeof(g_trampMtx),
@@ -25000,6 +25040,15 @@ static void LogConfigFingerprint()
         LogRngFile("config %s", g_cfgFpLine);
 }
 
+static void InstallOptionalViewsFamily()
+{
+    // R02b deliberately supports no optional VIEWS callback on any profile.
+    // Keep configured values intact; no native lookup, slot write or original
+    // callback publication is allowed before the separate active S02 gate.
+    Log("VIEWS unavailable: optional four-callback family blocked (R02b); "
+        "runtime receiver/type, callback and installation phase profile unproved; no slots changed");
+}
+
 static bool Install()
 {
     LoadSettings();
@@ -25069,15 +25118,7 @@ static bool Install()
         *(unsigned*)(g_fakeElem[i] + ELEM_STRRES) = sizeof(g_decisionText[i]) - 1;
     }
 
-    for (int i = 0; i < VIEW_COUNT && i < MAX_VIEWS; ++i)
-    {
-        void* thunk = VIEWS[i].tooltipSlot ? TOOLTIP_THUNKS[i] : UPDATE_THUNKS[i];
-
-        bool ok = PatchSlot(VIEWS[i].rvaVtable, VIEWS[i].slot,
-            thunk, &g_origSlot[i]);
-
-        Log("patch %s: слот %d = %d", VIEWS[i].name, VIEWS[i].slot, (int)ok);
-    }
+    InstallOptionalViewsFamily();
 
     if (g_settings.decisionFilter)
     {
@@ -25319,7 +25360,7 @@ static bool Install()
     }
     LogConfigFingerprint();
 
-    Log("Install: done");
+    Log("Legacy install sequence finished; complete-profile validation is not established; consult per-site applied/skipped/failed records");
     return true;
 }
 
@@ -26345,8 +26386,9 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID)
         __except (EXCEPTION_EXECUTE_HANDLER)
         {
             ok = false;
+            Log("Legacy install aborted by exception; partial legacy patch state is possible");
         }
-        Log("DllMain: attach, Install = %d", (int)ok);
+        Log("DllMain: attach, legacy install sequence returned=%d (not feature availability)", (int)ok);
         InterlockedExchange(&g_dllReady, 1);
     }
     else if (reason == DLL_PROCESS_DETACH)

@@ -30,11 +30,17 @@ struct V2ModAPI
 
     // Replaces vtable slot `slotIndex` of the vtable at `rvaVtable`.
     // *outOriginal receives the original function pointer. 1 = ok.
+    // R02b reserves the unavailable optional four-VIEWS spans: overlapping
+    // slot/output destinations reject with 0 and leave outputs untouched.
     int  (__cdecl* PatchSlot)(uint32_t rvaVtable, int slotIndex,
                               void* replacement, void** outOriginal);
 
     // Steals `steal` bytes at `rva` into `tramp` and redirects to `hook`.
-    // `expect` = expected original bytes (or NULL). 1 = ok.
+    // `expect` must provide all `steal` expected original bytes; NULL fails closed.
+    // Caller must prove complete instructions with no relative stolen operands.
+    // This legacy helper does not relocate instructions. 1 = ok.
+    // Source, trampoline and output spans overlapping reserved VIEWS reject.
+    // These restrictions are not a sandbox for arbitrary native plugin code.
     int  (__cdecl* StealToTrampoline)(uint32_t rva, unsigned steal,
                                       unsigned char* tramp, int trampSize,
                                       const unsigned char* expect,
