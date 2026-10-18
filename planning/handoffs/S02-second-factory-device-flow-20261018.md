@@ -9,4 +9,4 @@
 
 ## Git delivery
 
-Scoped documentation commit and push: pending. No unrelated user data or private artifacts may be staged.
+Scoped documentation delivered in commit `9830a14086147ac63f19fc23a13a58e868ccc270`; `origin/main` was independently checked with `git ls-remote` and matched. Only the three session documentation paths were staged. Unrelated `tests/fork/__pycache__/` and `tools/planning/__pycache__/` remain untracked and untouched. No unrelated user data or private artifacts may be staged.
