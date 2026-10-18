@@ -37,6 +37,7 @@
 #include "Fork/LegacyByteTransaction.h"
 #include "Fork/ExeThreadIatTransaction.h"
 #include "Fork/TbbImportTransaction.h"
+#include "Fork/D3dInstallTransaction.h"
 #include "Fork/Win32Memory.h"
 #include "Fork/StartupGate.h"
 #include "minhook/src/HDE/hde32.h"
@@ -12552,29 +12553,6 @@ static bool HookIatOrdinal(HMODULE module, const char* dllName, WORD ordinal, vo
     return false;
 }
 
-static bool PatchVtableSlot(void* obj, int slot, void* hook, void** orig)
-{
-    if (!obj || !hook)
-        return false;
-
-    void** vtable = *(void***)obj;
-    if (!vtable)
-        return false;
-
-    if (vtable[slot] == hook)
-        return true;
-
-    DWORD oldProtect = 0;
-    if (!VirtualProtect(&vtable[slot], sizeof(void*), PAGE_EXECUTE_READWRITE, &oldProtect))
-        return false;
-
-    if (orig && !*orig)
-        *orig = vtable[slot];
-    vtable[slot] = hook;
-    VirtualProtect(&vtable[slot], sizeof(void*), oldProtect, &oldProtect);
-    return true;
-}
-
 typedef DWORD (WINAPI* tGetTickCount)(void);
 typedef HANDLE (WINAPI* tCreateThread)(LPSECURITY_ATTRIBUTES, SIZE_T, LPTHREAD_START_ROUTINE, LPVOID, DWORD, LPDWORD);
 typedef DWORD_PTR (__cdecl *tBeginThreadEx)(void*, unsigned, LPTHREAD_START_ROUTINE, void*, unsigned, unsigned*);
@@ -12598,6 +12576,8 @@ static tDirect3DCreate9    g_realDirect3DCreate9 = 0;
 static tD3D9CreateDevice   g_realCreateDevice = 0;
 static tD3D9Reset          g_realReset = 0;
 static tD3D9Present        g_realPresent = 0;
+static fork_boundary::D3dInstallTransaction g_d3dInstallTransaction;
+static volatile LONG      g_d3dInstallUnavailable = 0;
 static void*               g_realTbbInit = 0;
 typedef void (WINAPI* tSleep)(DWORD);
 static tSleep              g_realSleep = 0;
@@ -13734,6 +13714,105 @@ static void ForceImmediatePresent(void* params)
     }
 }
 
+static HRESULT WINAPI HookCreateDevice(
+    void* self, UINT adapter, UINT type, HWND hwnd, DWORD flags,
+    void* params, void** outDevice);
+static HRESULT WINAPI HookReset(void* self, void* params);
+
+static void PublishD3dCreate9Original(std::uint32_t original)
+{
+    InterlockedExchangePointer((PVOID volatile*)&g_realDirect3DCreate9,
+        (PVOID)(DWORD_PTR)original);
+}
+
+static void PublishD3dCreateDeviceOriginal(std::uint32_t original)
+{
+    InterlockedExchangePointer((PVOID volatile*)&g_realCreateDevice,
+        (PVOID)(DWORD_PTR)original);
+}
+
+static void PublishD3dDeviceOriginals(std::uint32_t reset, std::uint32_t present)
+{
+    // Both originals are visible before the transaction exposes either hook.
+    InterlockedExchangePointer((PVOID volatile*)&g_realReset, (PVOID)(DWORD_PTR)reset);
+    InterlockedExchangePointer((PVOID volatile*)&g_realPresent, (PVOID)(DWORD_PTR)present);
+}
+
+static fork_boundary::D3dInstallBackend MakeCurrentD3dInstallBackend(HMODULE provider)
+{
+    return fork_boundary::MakeWin32D3dInstallBackend(
+        g_base, g_imageSize, (std::uint32_t)(DWORD_PTR)provider,
+        fork_boundary::kPinnedD3dImageSize,
+        PublishD3dCreate9Original, PublishD3dCreateDeviceOriginal,
+        PublishD3dDeviceOriginals);
+}
+
+static bool D3dInstallResultAvailable(const fork_boundary::D3dInstallReport& report,
+                                      bool mayDeferBusy)
+{
+    if (report.state == fork_boundary::D3dInstallState::Applied ||
+        report.state == fork_boundary::D3dInstallState::AlreadyInstalled)
+        return true;
+
+    // The initial EXE import can be retried later. A returned COM object cannot
+    // be retained for a later table retry, so Busy there also closes the family.
+    if (report.state == fork_boundary::D3dInstallState::Busy && mayDeferBusy)
+        return false;
+
+    if (InterlockedExchange(&g_d3dInstallUnavailable, 1) == 0)
+        Log("D3D9: installer unavailable: stage=%d state=%d retained=%d published=%d exposureKnownOrPossible=%d attempted=%u hookObservedBeforeRecovery=%u originalVerifiedAfterRecovery=%u; %s",
+            (int)report.stage, (int)report.state,
+            (int)report.providerReferenceRetained, (int)report.originalsPublished,
+            (int)report.hookPossiblyExposed, (unsigned)report.attemptedSlots,
+            (unsigned)report.hookObservedBeforeRecovery,
+            (unsigned)report.originalVerifiedAfterRecovery,
+            report.reason.c_str());
+    return false;
+}
+
+static bool InstallD3dCreateDeviceTable(void* object)
+{
+    if (InterlockedCompareExchange(&g_d3dInstallUnavailable, 0, 0) != 0)
+        return false;
+    try
+    {
+        HMODULE provider = GetModuleHandleA("d3d9.dll");
+        const auto backend = MakeCurrentD3dInstallBackend(provider);
+        const auto report = g_d3dInstallTransaction.InstallCreateDeviceTable(
+            (std::uint32_t)(DWORD_PTR)object,
+            (std::uint32_t)(DWORD_PTR)&HookCreateDevice, backend);
+        return D3dInstallResultAvailable(report, false);
+    }
+    catch (const std::bad_alloc&)
+    {
+        if (InterlockedExchange(&g_d3dInstallUnavailable, 1) == 0)
+            Log("D3D9: CreateDevice table installer unavailable: allocation failed");
+        return false;
+    }
+}
+
+static bool InstallD3dDeviceTablePair(void* device)
+{
+    if (InterlockedCompareExchange(&g_d3dInstallUnavailable, 0, 0) != 0)
+        return false;
+    try
+    {
+        HMODULE provider = GetModuleHandleA("d3d9.dll");
+        const auto backend = MakeCurrentD3dInstallBackend(provider);
+        const auto report = g_d3dInstallTransaction.InstallDeviceTablePair(
+            (std::uint32_t)(DWORD_PTR)device,
+            (std::uint32_t)(DWORD_PTR)&HookReset,
+            (std::uint32_t)(DWORD_PTR)&HookPresent, backend);
+        return D3dInstallResultAvailable(report, false);
+    }
+    catch (const std::bad_alloc&)
+    {
+        if (InterlockedExchange(&g_d3dInstallUnavailable, 1) == 0)
+            Log("D3D9: device table installer unavailable: allocation failed");
+        return false;
+    }
+}
+
 static HRESULT WINAPI HookReset(void* self, void* params)
 {
     ForceImmediatePresent(params);
@@ -13754,8 +13833,7 @@ static HRESULT WINAPI HookCreateDevice(
 
     if (hr >= 0 && outDevice && *outDevice)
     {
-        PatchVtableSlot(*outDevice, D3D9DEV_VT_RESET, (void*)HookReset, (void**)&g_realReset);
-        if (PatchVtableSlot(*outDevice, D3D9DEV_VT_PRESENT, (void*)HookPresent, (void**)&g_realPresent))
+        if (InstallD3dDeviceTablePair(*outDevice))
         {
             DWORD interval = 0;
             if (params)
@@ -13773,7 +13851,7 @@ static void* WINAPI HookDirect3DCreate9(UINT sdk)
 {
     void* obj = g_realDirect3DCreate9 ? g_realDirect3DCreate9(sdk) : 0;
     if (obj)
-        PatchVtableSlot(obj, D3D9_VT_CREATEDEVICE, (void*)HookCreateDevice, (void**)&g_realCreateDevice);
+        InstallD3dCreateDeviceTable(obj);
     return obj;
 }
 
@@ -14011,10 +14089,46 @@ static bool InstallExeThreadIatQuartet()
     }
 }
 
+static bool InstallD3dCreate9Import(HMODULE provider)
+{
+    if (InterlockedCompareExchange(&g_d3dInstallUnavailable, 0, 0) != 0)
+        return false;
+    if (!g_base || !g_imageSize ||
+        !ReadableExePatchSpan(fork_boundary::kPinnedD3dCreate9IatRva, sizeof(DWORD)))
+    {
+        if (InterlockedExchange(&g_d3dInstallUnavailable, 1) == 0)
+            Log("D3D9: Direct3DCreate9 IAT unavailable: EXE span invalid/unreadable");
+        return false;
+    }
+    try
+    {
+        const auto backend = MakeCurrentD3dInstallBackend(provider);
+        std::uint32_t current = 0;
+        if (!backend.exeMemory.read(
+                fork_boundary::kPinnedD3dCreate9IatRva,
+                reinterpret_cast<unsigned char*>(&current), sizeof(current)))
+        {
+            if (InterlockedExchange(&g_d3dInstallUnavailable, 1) == 0)
+                Log("D3D9: Direct3DCreate9 IAT unavailable: current slot unreadable");
+            return false;
+        }
+        const auto report = g_d3dInstallTransaction.InstallExeImport(
+            current, (std::uint32_t)(DWORD_PTR)&HookDirect3DCreate9, backend,
+            fork_boundary::PinnedD3dInstallExpectation());
+        if (report.state == fork_boundary::D3dInstallState::Applied)
+            Log("D3D9: Direct3DCreate9 import installed and verified");
+        return D3dInstallResultAvailable(report, true);
+    }
+    catch (const std::bad_alloc&)
+    {
+        if (InterlockedExchange(&g_d3dInstallUnavailable, 1) == 0)
+            Log("D3D9: Direct3DCreate9 import unavailable: allocation failed");
+        return false;
+    }
+}
+
 static bool TryPatchLateModules()
 {
-    HMODULE exe = GetModuleHandleA(NULL);
-
     if (g_settings.patchThreadFpuPin)
     {
         if (!InstallExeThreadIatQuartet())
@@ -14022,17 +14136,12 @@ static bool TryPatchLateModules()
     }
 
     HMODULE d3d9 = GetModuleHandleA("d3d9.dll");
-    static LONG d3dHooked = 0;
-    if (g_settings.patchD3dFpuPreserve && d3d9 && d3dHooked == 0)
+    if (g_settings.patchD3dFpuPreserve)
     {
-        if (!g_realDirect3DCreate9)
-            g_realDirect3DCreate9 = (tDirect3DCreate9)GetProcAddress(d3d9, "Direct3DCreate9");
-        if (g_realDirect3DCreate9 &&
-            HookIat(exe, "d3d9.dll", "Direct3DCreate9", (void*)HookDirect3DCreate9, (void**)&g_realDirect3DCreate9))
-        {
-            d3dHooked = 1;
-            Log("D3D9: Direct3DCreate9 перехвачен");
-        }
+        if (InterlockedCompareExchange(&g_d3dInstallUnavailable, 0, 0) != 0)
+            return false;
+        if (d3d9 && !InstallD3dCreate9Import(d3d9))
+            return false;
     }
 
     HMODULE tbb = GetModuleHandleA("tbb.dll");

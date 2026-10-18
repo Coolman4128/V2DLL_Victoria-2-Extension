@@ -25,6 +25,7 @@
     <ClInclude Include="Fork\LegacyByteTransaction.h" />
     <ClInclude Include="Fork\ExeThreadIatTransaction.h" />
     <ClInclude Include="Fork\TbbImportTransaction.h" />
+    <ClInclude Include="Fork\D3dInstallTransaction.h" />
     <ClInclude Include="Fork\ViewsBoundary.h" />
     <ClInclude Include="Fork\Win32Memory.h" />
     <ClInclude Include="Fork\StartupGate.h" />
@@ -40,6 +41,7 @@
     <ClCompile Include="Fork\LegacyByteTransaction.cpp" />
     <ClCompile Include="Fork\ExeThreadIatTransaction.cpp" />
     <ClCompile Include="Fork\TbbImportTransaction.cpp" />
+    <ClCompile Include="Fork\D3dInstallTransaction.cpp" />
     <ClCompile Include="Fork\ViewsBoundary.cpp" />
     <ClCompile Include="Fork\Win32Memory.cpp" />
     <ClCompile Include="Fork\StartupGate.cpp" />
