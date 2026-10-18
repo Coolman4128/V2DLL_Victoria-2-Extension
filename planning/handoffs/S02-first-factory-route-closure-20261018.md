@@ -10,3 +10,6 @@
 
 
 - Timing review: one whole-session closeout review; 2.769 minutes actual vs 45-minute estimate, S02 family wall 1,275.558 minutes. Similar bounded static audits reusing accepted artifacts calibrate to 5–10 minutes. The review changed timing only, not work or scope.
+
+
+- Delivery: scoped documentation commit `b6d8180d1a733d798fed14e39039cb2fbfe22f26` was pushed to `origin/main`; remote ref independently matched this commit. The only remaining worktree entries are pre-existing untracked Python cache directories and were preserved.
