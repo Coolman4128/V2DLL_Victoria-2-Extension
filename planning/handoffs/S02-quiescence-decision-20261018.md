@@ -27,4 +27,4 @@ The complete session received one timing-only review because it finished below h
 
 Next scoped session: classify only the already-required `HookPresent` transitive callback closure and M3 other-thread lifetime gates from existing source/evidence. Return PASS or NOT PROVEN per gate with precise limitations. No build, test, game/debugger run, candidate launch, or new fix scope. This is ordinary S02 planning and is independent of timing-review feedback.
 
-Git delivery: scoped incomplete checkpoint. A commit never certifies S02 acceptance.
+Git delivery: scoped incomplete checkpoint. This session's decision/scope commits `68cacca` and `7441c0b`, followed by its timing-review record `fa9333b`; each was pushed to `origin/main`, which was verified at `fa9333b` before the next session. A commit never certifies S02 acceptance.
