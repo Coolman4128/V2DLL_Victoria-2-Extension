@@ -196,6 +196,8 @@ StartupDecision CheckProductionStartup(void* self, const void* reserved) {
 void ReportStartupDecision(const StartupDecision& decision) {
     OutputDebugStringA("V2DLL startup unavailable: ");
     OutputDebugStringA(decision.reason);
+    if (decision.state != StartupState::Authorized)
+        OutputDebugStringA("; applied native sites=0; skipped native installer groups=M0,M1,M2,M3,legacy");
     if (decision.failedSite) {
         OutputDebugStringA("; site: ");
         OutputDebugStringA(decision.failedSite);

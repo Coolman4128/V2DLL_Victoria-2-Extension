@@ -5006,6 +5006,96 @@ static DWORD FileOffsetToRVA(DWORD fileOffset)
 }
 
 
+// Validate the effective byte-table set as one dependency before Install's
+// first native patch. The same descriptors drive this check and the legacy
+// writer, so settings/aliases cannot drift into a second signature catalog.
+// This is read-only signature validation, not a write/protection transaction
+// or authorization for the other legacy installers.
+static bool ReadableExePatchSpan(DWORD rva, DWORD length)
+{
+    const ULONGLONG start = (ULONGLONG)g_base + rva;
+    const ULONGLONG end = start + length;
+    if (!g_base || !length || end > 0x100000000ULL)
+        return false;
+    for (ULONGLONG cursor = start; cursor < end;)
+    {
+        MEMORY_BASIC_INFORMATION region = {};
+        if (VirtualQuery((const void*)(DWORD_PTR)cursor, &region,
+                sizeof(region)) != sizeof(region) ||
+            region.State != MEM_COMMIT || region.Type != MEM_IMAGE ||
+            region.AllocationBase != (const void*)(DWORD_PTR)g_base ||
+            (region.Protect & (PAGE_GUARD | PAGE_NOACCESS)))
+            return false;
+        switch (region.Protect & 0xFF)
+        {
+        case PAGE_READONLY:
+        case PAGE_READWRITE:
+        case PAGE_WRITECOPY:
+        case PAGE_EXECUTE_READ:
+        case PAGE_EXECUTE_READWRITE:
+        case PAGE_EXECUTE_WRITECOPY:
+            break;
+        default:
+            return false;
+        }
+        const ULONGLONG regionBase = (DWORD_PTR)region.BaseAddress;
+        const ULONGLONG regionEnd = regionBase + region.RegionSize;
+        if (!region.RegionSize || regionBase > cursor || regionEnd <= cursor ||
+            regionEnd > 0x100000000ULL)
+            return false;
+        cursor = regionEnd < end ? regionEnd : end;
+    }
+    return true;
+}
+
+static bool PreflightExePatches()
+{
+    int enabled = 0;
+    for (int i = 0; i < EXE_PATCH_COUNT; ++i)
+    {
+        const BytePatch& bp = EXE_PATCHES[i];
+        if (!bp.enabled)
+            continue;
+        ++enabled;
+
+        DWORD rva = bp.rva;
+        bool resolved = true;
+        if (!rva)
+        {
+            __try { rva = FileOffsetToRVA(bp.fileOffset); }
+            __except (EXCEPTION_EXECUTE_HANDLER) { resolved = false; }
+        }
+        if (!resolved || bp.len <= 0 || bp.len > (int)sizeof(bp.expect) || !rva ||
+            !g_imageSize || rva >= g_imageSize ||
+            (DWORD)bp.len > g_imageSize - rva ||
+            !ReadableExePatchSpan(rva, (DWORD)bp.len))
+        {
+            Log("Patch preflight unavailable: '%s' has an invalid image span", bp.name);
+            return false;
+        }
+
+        unsigned char actual[sizeof(bp.expect)] = {};
+        bool readable = true;
+        __try
+        {
+            memcpy(actual, (const void*)(g_base + rva), bp.len);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            readable = false;
+        }
+        if (!readable || memcmp(actual, bp.expect, bp.len) != 0)
+        {
+            Log("Patch preflight unavailable: '%s' unreadable or signature mismatch at rva %06X",
+                bp.name, rva);
+            return false;
+        }
+    }
+    Log("Patch preflight: %d enabled byte-table dependencies validated; no patch applied by this check", enabled);
+    return true;
+}
+
+
 static void InstallExePatches()
 {
     for (int i = 0; i < EXE_PATCH_COUNT; ++i)
@@ -25076,6 +25166,13 @@ static bool Install()
         if (!g_imageSize)
             g_imageSize = 0xC00000;
     }
+
+    // A mismatched enabled byte-table dependency aborts this legacy sequence
+    // before any Install-side native patch, including its sibling rows/hooks.
+    // Other native families remain unavailable until the complete active
+    // profile and their own grouped dependencies are independently validated.
+    if (!PreflightExePatches())
+        return false;
 
     g_fnOnMakeDecision = (void*)(g_base + RVA_ONMAKEDECISION);
 
