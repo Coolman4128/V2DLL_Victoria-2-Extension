@@ -10,7 +10,7 @@ Each row needs a result and evidence path in `planning/results/acceptance.md` du
 
 ## Baselines
 
-Maintain four separately identified builds/profiles: native vanilla, native GHM 0.6, retained-fixes fork with new features off, and release candidate with the requested features on. The native-to-fixes comparison allows only documented bug/stability corrections. Optimization equivalence is tested against the same retained-fixes profile, not an incorrectly assumed identical vanilla simulation. Record executable/build/mod/config/save hashes for every comparison.
+Maintain four separately identified builds/profiles: native vanilla, native HPM 0.4.6.3, retained-fixes fork with new features off, and release candidate with the requested features on. The native-to-fixes comparison allows only documented bug/stability corrections. Optimization equivalence is tested against the same retained-fixes profile, not an incorrectly assumed identical vanilla simulation. Record executable/build/mod/config/save hashes for every comparison.
 
 ## Required checks
 
@@ -22,12 +22,12 @@ Maintain four separately identified builds/profiles: native vanilla, native GHM 
 | V02 | Stock economy/combat/diplomacy with features off | No unrelated V2DLL changes; retained corrections enumerated | S04 |
 | V03 | Existing crash/reinforcement/modifier/UI fixes | Targeted reproductions fixed, valid native scenarios unchanged | S04, S26 |
 | V04 | Frozen MP remedies with diagnostics off | Same effective FPU/quantization/savings behavior; reporting independent | S06 |
-| P01 | Exact game-year timing at speed 5 | All days execute; load/cache/user pause excluded and disclosed | S05–S07 |
-| P02 | GHM early/mid/late performance | Median <12 seconds each primary; <30 each fallback; spread disclosed | S13, S28–S29 |
-| P03 | Vanilla timing matrix | Same procedure; separately report misses | S28 |
+| P01 | Exact 1837 timing at speed 5 | Simulate 1836 untimed in same process; measure 1837-01-01 to 1838-01-01; all days execute; load/pause treatment disclosed | S05–S07 |
+| P02 | HPM 1837 performance | Five repetitions; median <12 seconds primary or <30 fallback; spread disclosed; no later-date absolute-speed gate | S13, S28–S29 |
+| P03 | Vanilla 1837 comparison and supplementary later regression checks | Same 1837 procedure reported separately; later fixtures only when available/useful, with no <12/<30 requirement | S28 |
 | P04 | Optimization fidelity | Same required state/RNG/events/orders under identical setup; unexplained differences reject candidate | S08–S12 |
 | P05 | Feature overhead | Report idle, 10 and 100 feasible jobs; no runaway scans, queue/memory growth or UI stalls | S27–S28 |
-| T01 | Template CRUD and unit-type data | Persistent names/revisions/counts; unknown/locked types handled; GHM list supported; renamed/missing type after mod-version change blocks rather than remapping by numeric index | S19, S26 |
+| T01 | Template CRUD and unit-type data | Persistent names/revisions/counts; unknown/locked types handled; HPM list supported; renamed/missing type after mod-version change blocks rather than remapping by numeric index | S19, S26 |
 | T02 | Partial recruitment availability | Legal subset queued; remaining counts pending; normal money/goods/POP/time | S21 |
 | T03 | Concurrent jobs plus manual recruitment | No over-reservation, duplicate ticket or commandeered unit | S21 |
 | T04 | Gather and merge mixed composition | One correct final stack, exact assigned IDs/counts, no unrelated troops | S22 |
@@ -57,14 +57,14 @@ Maintain four separately identified builds/profiles: native vanilla, native GHM 
 | SAVE04 | Transfer save to another machine/controller | Explicit safe resume/recovery contract; sidecar assumptions disclosed | S25 / user test |
 | M01 | Human host and human client both start jobs | Each order emitted once by correct owner; no AI automation | S27 / user test |
 | M02 | Frozen stability behavior retained | No new MP enhancement claimed or silently changed | All |
-| G01 | Vanilla and GHM UI/layout/mod-local overrides | Working feature UI, policy enforced, GHM content retained | S26 |
+| G01 | Vanilla and HPM UI/layout/mod-local overrides | Working feature UI, policy enforced, HPM content retained | S26 |
 | D01 | Package/deploy/rollback | Known current binaries/assets, manifests/backups, reproducible build | S30 |
 
 ## Performance procedure
 
-The full procedure lives in [research/performance.md](research/performance.md). Use fixed early (1836), mid (approximately 1880) and late (approximately 1910) saves per workload; use exact available dates and record them rather than inventing fixtures. Generate later dates through normal simulation, not date cheats that bypass world growth. Save generation can need extra bounded sessions.
+The full procedure lives in [research/performance.md](research/performance.md). Required throughput fixtures are pinned 1836 starting setups for HPM and vanilla. Simulate the entire startup year normally, then measure **1837-01-01 to 1838-01-01**. Mid/late saves are supplementary regression fixtures only when already available or a specific suspected regression justifies them; do not spend sessions generating decades solely to certify the early-game goal.
 
-Final timing: five fresh-process repetitions per fixture/candidate, one full calendar month of warm-up then one full calendar year from the fixed post-warm-up date, speed 5, identical visible view/render cap/UI, game not minimized, no deliberate omissions of simulation work. Report normal autosave-inclusive timing separately from the no-autosave raw throughput target. Correctness runs use diagnostics separately. No tuning OS settings, overclock, renderer or resolution without recording it consistently for both baseline and candidate.
+Final timing: five fresh-process repetitions per required workload/candidate, each loading the same pinned 1836 starting save and simulating 1836 untimed before timing exactly 1837. Loading an 1837 save immediately before timing or adding a warm-up month inside 1837 is not this protocol. Use speed 5, identical visible view/render cap/UI, game not minimized, and no omitted simulation work. Report normal autosave-inclusive timing separately from the no-autosave raw throughput target. Correctness runs use diagnostics separately. Record OS/render settings consistently for baseline and candidate.
 
 For a 365-day year the primary target implies about 30.4 game days/second or 32.9 ms/day; fallback about 12.2 days/second or 82.2 ms/day. These are total wall-time budgets, not promises about what the native engine can achieve. Report a full-year measurement, not extrapolation from one fast day.
 
@@ -72,4 +72,4 @@ For a 365-day year the primary target implies about 30.4 game days/second or 32.
 
 Keep optimization-only comparisons separate from intentional requested feature changes. Daily hashes help locate divergence but do not cover every field or prove purity. Review targeted combat, recruitment and command traces and native world counts as well. If the identical baseline cannot reproduce its own output, resolve the fixture/measurement uncertainty before interpreting A/B differences.
 
-No silent lowering of thresholds. A result can be `PRIMARY MET`, `FALLBACK MET`, `MISSED`, or `NOT MEASURED` per fixture. A feature can be `PASSED`, `FAILED`, `BLOCKED`, or `NOT RUN`. A usable local package may still have a documented unmet performance target or pending user MP test; neither is relabeled complete.
+No silent lowering of thresholds. The HPM 1837 target can be `PRIMARY MET`, `FALLBACK MET`, `MISSED`, or `NOT MEASURED`; vanilla is a separately reported comparison and later dates are supplementary regression results. A feature can be `PASSED`, `FAILED`, `BLOCKED`, or `NOT RUN`. A usable local package may still have a documented unmet performance target or pending user MP test; neither is relabeled complete.

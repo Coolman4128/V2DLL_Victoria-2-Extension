@@ -3,7 +3,7 @@
 Research date: 2026-10-17. Repository baseline: `4368f434cc33b00e7b3cc4ff2458e1f69a9ec97d`.
 This document is an implementation specification and evidence map, not a claim that the features already work. No runtime hooks were installed during research.
 
-User-confirmed workload: Greater History Mod (GHM) 0.6, with vanilla control fixtures. Templates and transport operate for human players only. The root [architecture](../architecture.md) and serial sessions own canonical filenames and scheduling; packet names below are research decomposition, not a second independent plan.
+User-confirmed workload: Historical Project Mod (HPM), with vanilla control fixtures. Official release 0.4.6.3 is selected for pinning; installation/native validation remain pending. Templates and transport operate for human players only. The root [architecture](../architecture.md) and serial sessions own canonical filenames and scheduling; packet names below are research decomposition, not a second independent plan.
 
 ## Scope and decisions
 

@@ -9,15 +9,17 @@ Status: approved user requirements translated into an implementation contract; n
 | ID | Requirement | Completion rule |
 | --- | --- | --- |
 | MP-0 | Retain upstream multiplayer stability work; no further improvements until user tests | DONE — awaiting user testing; no planned MP-improvement sessions |
-| PERF-12 | Under 12 seconds per complete game year, speed 5, on user's hardware | Measured against every required GHM fixture; vanilla results reported separately |
-| PERF-30 | Backup under 30 seconds/year | Report as fallback only; does not erase unmet PERF-12 |
+| PERF-12 | Under 12 seconds for 1837-01-01 to 1838-01-01, speed 5, after untimed normal simulation of 1836 | Five HPM repetitions, median <12 seconds; vanilla same-year results reported separately |
+| PERF-30 | Backup under 30 seconds for that same 1837 year | Report as fallback only; does not erase unmet PERF-12 |
 | VAN-1 | Original engine behavior plus bug fixes | No unrelated V2DLL economy, diplomacy, allied transport, damage or deployment changes activate |
 | SCRIPT-1 | Keep useful additional scripting | Existing scripts unchanged; extensions inert unless content explicitly requests them |
 | TMP-1 | Saved army templates and one-click construction | Exact requested types/counts recruited as legal, gathered and merged; pending shortages remain visible |
 | ZERO-1 | Zero-man brigades survive and can reinforce | No automatic partial army deletion; zero combat value; manual disband and genuine full-stack wipes permitted |
 | TRN-1 | EU4-style prompted automatic sea transport | Land-unreachable, sea-reachable destination; own transports; capacity-limited batches; complete move/board/sail/unload/recombine cycle |
 
-User clarification: templates and transport control **human players only**. The selected mod is **Greater History Mod (GHM)**, not Greater Flavor Mod. Use vanilla as the original-behavior baseline and GHM as the main real-world performance and compatibility workload. GHM's intentional economic/content changes remain part of GHM; this fork removes its own unwanted changes.
+User clarification: templates and transport control **human players only**. The selected mod is **Historical Project Mod (HPM)**, corrected by the user from the earlier GHM identification. Use vanilla as the original-behavior baseline and HPM as the main real-world performance and compatibility workload. HPM's intentional economic/content changes remain part of HPM; this fork removes its own unwanted changes.
+
+Performance clarification (2026-10-17): the absolute speed goals apply to the beginning of the campaign, **measuring 1837 after the startup year has settled**. Each authoritative repetition starts from the pinned 1836 setup in a fresh process, simulates 1836 normally without timing it, and measures only the full 1837 year. Do not move the date forward or replace this warm-up with a month after loading an 1837 save. Later dates may be checked for regressions; their speed does not decide PERF-12/PERF-30, and missing later saves do not block those goals.
 
 ## Original behavior
 

@@ -1,6 +1,6 @@
 # Implementation architecture
 
-Speed-first dependency rule (2026-10-18): follow [execution control](execution-control.md). An untouched native HPM measurement is independent of inactive fork adapters. Certify only the exact active dependency set before a modified-build call/launch; keep unsupported routes unavailable and required frozen behavior intact. Do not turn the binary-boundary module into a universal engine/renderer rewrite. Architecture discovery consumes its parent session's cumulative cap.
+Speed-first dependency rule (2026-10-18): follow [execution control](execution-control.md). An untouched native HPM measurement is independent of inactive fork adapters. Certify only the exact active dependency set before a modified-build call/launch; keep unsupported routes unavailable and required frozen behavior intact. Do not turn the binary-boundary module into a universal engine/renderer rewrite. Architecture discovery follows focused session estimates and the estimate-based review cadence.
 
 This is a proposed architecture, not a claim that these modules already exist. Follow the numbered sessions and verify native APIs before wiring them.
 
@@ -61,7 +61,7 @@ The current generic trampoline copies stolen bytes without relocation. New calle
 
 ## UI/mod deployment
 
-Use engine-rendered controls rather than external keystroke automation for the product. Native modal confirmation patterns and GUI asset loading are discovered in S18/S19. Namespaced controls must coexist with vanilla and GHM's changed interfaces. Prefer additive assets/targeted integration over replacing an entire GHM window. Assets are installed with manifests/backups; an incompatible UI is detected and reported. A hidden hotkey-only prototype is not final acceptance for a requested one-click workflow.
+Use engine-rendered controls rather than external keystroke automation for the product. Native modal confirmation patterns and GUI asset loading are discovered in S18/S19. Namespaced controls must coexist with vanilla and HPM's changed interfaces. Prefer additive assets/targeted integration over replacing an entire HPM window. Assets are installed with manifests/backups; an incompatible UI is detected and reported. A hidden hotkey-only prototype is not final acceptance for a requested one-click workflow.
 
 ## Performance boundaries
 

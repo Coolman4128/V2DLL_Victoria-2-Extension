@@ -13,13 +13,13 @@ These are engineering uncertainty records, not reasons to stop useful independen
 | Zero brigades violate native assumptions | Damage/wipe/reinforcement/POP cleanup use different paths | S19–S22 prove classification; no global destructor suppression |
 | Persistent IDs / transferred saves | Mod loader exposes no save API | S16/S17 decide metadata path, safe recovery; no sidecar-only guarantees |
 | Exact EU4 parity unobserved | Localized prompt states known, runtime algorithms unknown | S19 observe controlled reference cases; S20–S24 implement and compare |
-| GHM runtime dependency / own bugs | Archive installed; no launch test yet | S01 smoke; isolate native GHM failure from fork regression |
+| HPM runtime dependency / own bugs | Official HPM 0.4.6.3 installed and file-verified; native baseline pending | S01HPM smoke; isolate native HPM failure from fork regression |
 | Final threshold beyond patchable bottleneck | <12 s requires average <32.9 ms/day | S13/S28 quantify gap; S29/R06/R07 only useful candidates; don't skip work |
 | Growing feature scope | AI automation, auto-replacement and new MP work tempting | Excluded unless user explicitly expands scope |
 
 ## Cumulative stop rule replaces renewable continuations
 
-[Execution control](execution-control.md) overrides the former reserve policy. One objective has one hard cumulative cap. R01–R08 and uniquely named descendants consume parent time; they add no automatic hours. Do not create a fresh continuation when a deadline expires. Stop, preserve a concise incomplete checkpoint, and report the precise blocker, cost and speed impact. Only a direct human grant of named additional minutes permits more time.
+[Execution control](execution-control.md) replaces the former hard-cap policy. R01–R08 and continuations retain their parent family history but do not create automatic work. Estimates are advisory: pause once after two hours for one independent timing review, then resume the same objective; at 2.5x estimate, reduce scope and continue with a smaller deliverable. Timing reviews calibrate estimates only and do not add tasks or expand scope.
 
 The S02 incident exceeded ten wall-clock hours through automatic continuation and dependency growth. S02/R02 is exhausted. A new manager, packet name or chat cannot reopen it. Mandatory 30/60/90-minute decisions, final-15-minute scope freeze and admission checks apply to the entire family. Cap discovery to one question and at most two discriminating attempts; unchanged blockers stop immediately.
 
