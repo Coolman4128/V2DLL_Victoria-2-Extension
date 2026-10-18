@@ -25,4 +25,6 @@ The R02u single observed route, R02v copy mechanics, and R02w owned SDK copy run
 
 This complete session receives at most one timing-only review because it finished below half of its estimate. That review can calibrate future estimates only; it cannot add work or change scope. See the persistent session ledger for its record. The next eligible action is to retain this blocker and continue only with already-required S02 evidence that can be obtained safely; no candidate launch or S03 start is authorized by this checkpoint.
 
+Next scoped session: classify only the already-required `HookPresent` transitive callback closure and M3 other-thread lifetime gates from existing source/evidence. Return PASS or NOT PROVEN per gate with precise limitations. No build, test, game/debugger run, candidate launch, or new fix scope. This is ordinary S02 planning and is independent of timing-review feedback.
+
 Git delivery: scoped incomplete checkpoint. A commit never certifies S02 acceptance.

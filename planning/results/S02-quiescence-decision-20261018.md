@@ -30,4 +30,4 @@ The missing evidence is a production-equivalent exclusive phase covering all act
 | HPM speed | NOT MEASURED; P00 remains skipped by user direction |
 | Runtime/build/test/deployment work in this session | NOT RUN |
 
-Next action: preserve this precise blocker and do not repeat stock-game capture or unpatched provider-copy checks as substitutes. A production-equivalent safe install-phase proof is a hard precondition before any candidate/profile launch. Continue only with already-required S02 evidence that can be obtained without violating that gate.
+Next action: preserve this precise blocker and do not repeat stock-game capture or unpatched provider-copy checks as substitutes. A production-equivalent safe install-phase proof is a hard precondition before any candidate/profile launch. The next bounded S02 session may classify, from existing source/evidence only, the two already-open gates for transitive `HookPresent` callback closure and M3 other-thread lifetime. It must record PASS or NOT PROVEN per gate with exact limits; no build, test, game/debugger run, candidate launch, or new fix scope.
