@@ -17,15 +17,17 @@ These are engineering uncertainty records, not reasons to stop useful independen
 | Final threshold beyond patchable bottleneck | <12 s requires average <32.9 ms/day | S13/S28 quantify gap; S29/R06/R07 only useful candidates; don't skip work |
 | Growing feature scope | AI automation, auto-replacement and new MP work tempting | Excluded unless user explicitly expands scope |
 
-## Bounded continuations
+## Cumulative stop rule replaces renewable continuations
 
-Use the reserve packets in `sessions/R01.md` through `R08.md` only when their trigger is recorded. Every activated reserve is inserted after its blocked parent in the serial schedule. If even that discovery remains incomplete, create a fresh <=120-minute continuation with a concrete hypothesis/evidence output; do not hide another day of work inside an existing packet. Never start implementation that needs an unproven API just to use the remaining time.
+[Execution control](execution-control.md) overrides the former reserve policy. One objective has one hard cumulative cap. R01–R08 and uniquely named descendants consume parent time; they add no automatic hours. Do not create a fresh continuation when a deadline expires. Stop, preserve a concise incomplete checkpoint, and report the precise blocker, cost and speed impact. Only a direct human grant of named additional minutes permits more time.
 
-The first-pass schedule contains 30 sessions; five optimization sessions are conditional and can be skipped. The schedule table totals elapsed upper budgets, not total agent labor. With three parallel workers, summed labor is larger. Eight optional reserve packets add at most 16 scheduled hours for their first pass. Additional unknowns may require re-estimation; the plan does not claim a finite proof of feasibility for all native hooks.
+The S02 incident exceeded ten wall-clock hours through automatic continuation and dependency growth. S02/R02 is exhausted. A new manager, packet name or chat cannot reopen it. Mandatory 30/60/90-minute decisions, final-15-minute scope freeze and admission checks apply to the entire family. Cap discovery to one question and at most two discriminating attempts; unchanged blockers stop immediately.
+
+There is no automatic 16-hour reserve allowance. Earlier schedule totals are estimates, not renewed authority. P00 measures untouched native HPM independently, so unproved inactive fork hooks cannot hold the first speed baseline hostage. Modified builds still require all active native dependencies proved.
 
 ## Efficient order
 
-Establish build, compatibility, effective settings and baseline first. Reject expensive optimizations whose theoretical maximum gain cannot close the observed gap. Keep one shared command/identity/persistence layer for both automation features. Develop pure planners/test fixtures in parallel with bounded native discovery, then integrate once. Defer broad refactors, new network features, custom renderer and 64-bit conversion. Stop performance experiments after measured primary success and concentrate on remaining feature acceptance.
+Obtain the untouched native HPM baseline in P00 first, reusing the accepted build/environment. Establish the minimum safe active modified profile and canonical settings before candidate timing; do not expand into universal compatibility certification. Reject expensive optimizations whose theoretical maximum gain cannot close the observed gap. Keep one shared command/identity/persistence layer for both automation features. Develop pure planners/test fixtures in parallel with bounded native discovery, then integrate once. Defer broad refactors, new network features, custom renderer and 64-bit conversion. Stop performance experiments after measured primary success and concentrate on remaining feature acceptance.
 
 ## Decisions that may need user input during execution
 

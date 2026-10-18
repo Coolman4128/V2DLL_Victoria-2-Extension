@@ -1,5 +1,7 @@
 # Implementation architecture
 
+Speed-first dependency rule (2026-10-18): follow [execution control](execution-control.md). An untouched native HPM measurement is independent of inactive fork adapters. Certify only the exact active dependency set before a modified-build call/launch; keep unsupported routes unavailable and required frozen behavior intact. Do not turn the binary-boundary module into a universal engine/renderer rewrite. Architecture discovery consumes its parent session's cumulative cap.
+
 This is a proposed architecture, not a claim that these modules already exist. Follow the numbered sessions and verify native APIs before wiring them.
 
 ## Integration choice

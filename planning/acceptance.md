@@ -1,5 +1,11 @@
 # Validation contract and test matrix
 
+## Execution acceptance and speed priority
+
+[Execution control](execution-control.md) is mandatory. A session result must report one original cumulative clock/deadline across all descendants, quarter-point decisions, a final-15-minute wrap-up, honest budget exhaustion and scoped Git state. A new packet name does not renew time. No automatic reserve after exhaustion. Native safety/fidelity and the performance thresholds below are unchanged.
+
+P00 measures **original-game HPM**, independently of inactive fork hooks. Its native result is distinct from retained-fixes/candidate acceptance. An accurate first sample validates the procedure; five valid repetitions are needed for a median/spread and threshold comparison. Incomplete repetitions remain incomplete. A speed-first schedule never converts an unverified modified profile into an accepted one.
+
 Each row needs a result and evidence path in `planning/results/acceptance.md` during execution. Until then it is NOT RUN. Unit tests alone cannot mark native behavior passed. User multiplayer testing remains pending; the MP checklist below tests new-feature integration when that testing becomes available, without authorizing an MP-improvement project.
 
 ## Baselines

@@ -1,15 +1,21 @@
 # Victoria 2 fork — execution plan
 
-Research date: **2026-10-17**. Source snapshot: `4368f434cc33b00e7b3cc4ff2458e1f69a9ec97d`, V2DLL source version 5.83. The plan is ready to execute starting at **[S01](sessions/S01.md)**. Fork source implementation has not started.
+## Controlling revision: speed first, no renewable timeboxes
 
-**30 serial sessions, each 90–120 minutes, with independent work assigned to parallel agents inside the session.** Sessions 19–24 run the zero-brigade, template and transport tracks together after the shared engine/order/save/UI foundation. Only the integrator writes shared files; live game control and actual benchmarks are serialized.
+The user's 2026-10-18 correction supersedes the old reserve model. **[Execution control](execution-control.md) is mandatory.** A top-level session and every child share one hard cumulative deadline; no automatic extension or renamed restart. The last 15 minutes are reserved for verification, safe cleanup, handoff and scoped Git. Explicit human approval of additional minutes is required after exhaustion.
 
-The first-pass elapsed budget is **48 hours required + up to 10 hours conditional optimization = 58 hours** with the stated parallel staffing. Eight optional reserve packets add **up to 16 hours** for their first activation. These are engineering estimates, not a promise that undocumented native hooks or the 12-second target can be proved within 58 hours. Agent labor is greater than elapsed time. Discovery failures trigger an explicitly estimated <=2-hour continuation; no hidden all-day sessions.
+**Current state:** S01/S01HPM accepted; S02/R02 BUDGET EXHAUSTED / INCOMPLETE; R02w is an uncommitted, undeployed partial checkpoint. No further S02 work is active. **Next eligible execution:** [P00 original HPM speed baseline](sessions/P00.md), an independent measurement of the untouched game. S03–S30 remain gated for modified-build work. This documentation change does not resume the game or start P00.
+
+Research date: **2026-10-17**. Source snapshot: `4368f434cc33b00e7b3cc4ff2458e1f69a9ec97d`, V2DLL source version 5.83. Execution history is recorded in status; S01 is complete and the current next eligible packet is P00. Fork source implementation and bounded investigations have occurred; current state and eligibility are recorded above.
+
+**30 numbered sessions plus the explicit independent P00 insertion, each capped at its listed 90 or 120 cumulative minutes, with independent work assigned to parallel agents inside the session.** Sessions 19–24 run the zero-brigade, template and transport tracks together after the shared engine/order/save/UI foundation. Only the integrator writes shared files; live game control and actual benchmarks are serialized.
+
+The historical 30-session estimate was 48 required hours plus up to 10 conditional optimization hours. It is a planning estimate, not authority to spend extra time. Reserve labels add **zero automatic hours**: they share their parent cap. P00 adds one distinct original-game measurement objective capped at 120 minutes. Historical S02 overspend must remain visible; no new total disguises it.
 
 ## Start here
 
 1. Read root [AGENTS.md](../AGENTS.md), [requirements](requirements.md) and [architecture](architecture.md).
-2. Check [status](status.md) and the most recent session handoff; execute the next open session packet.
+2. Read [execution control](execution-control.md), check status and the durable parent deadline, then select the next eligible packet. Never automatically resume an exhausted parent.
 3. Use [acceptance](acceptance.md) as the completion contract and [risks](risks.md) for blocked discovery/continuation rules.
 4. Complete the packet's exit checks, record evidence and actual time, then advance serially. Conditional performance packets can be skipped with a recorded reason; required features cannot.
 5. Research documents contain candidate packet suggestions from individual investigations. **The 30-session table below supersedes their local packet numbering and totals.** Do not execute those suggestions as extra sessions.
@@ -44,7 +50,8 @@ Each packet specifies outcome, inputs, parallel lanes, integration, exit checks 
 | Session | Work packet | Estimate | Execution |
 | --- | --- | --- | --- |
 | [S01](sessions/S01.md) | Reproducible build and launch baseline | 90 min | Required |
-| [S02](sessions/S02.md) | Executable and patch-boundary verification | 120 min | Required |
+| [P00](sessions/P00.md) | Unmodified original-game HPM speed baseline | 120 min cumulative | Next eligible; independent of inactive fork hooks |
+| [S02](sessions/S02.md) | Executable and patch-boundary verification | 120 min cumulative, already exceeded | BUDGET EXHAUSTED / INCOMPLETE; no automatic resume |
 | [S03](sessions/S03.md) | Canonical settings and enforceable patch policy | 120 min | Required |
 | [S04](sessions/S04.md) | Vanilla behavior and retained-fix acceptance | 120 min | Required |
 | [S05](sessions/S05.md) | Benchmark harness and fixture specification | 120 min | Required |
@@ -78,24 +85,24 @@ Each packet specifies outcome, inputs, parallel lanes, integration, exit checks 
 
 S01–S08 establish a trustworthy build, behavior baseline and measurements before optimization. S09–S12 are conditional: skip if the primary target is met or no viable/proved candidate exists. S13 records the best baseline. S14–S18 establish services used by all three features. Their native mutation boundaries share the same executable and integration points, so their proofs precede feature workers.
 
-S19–S24 overlap independent feature work across up to three workers. There is a serial integration barrier after each session; if one proof fails, finish independent work already in that session and insert only the blocked lane's continuation. S25 combines save/feature interactions, S26–S28 validate compatibility, stress and performance, S29 is one last justified candidate, and S30 packages a reviewable local result.
+S19–S24 overlap independent feature work across up to three workers. There is a serial integration barrier after each session; if one proof fails, finish only budgeted independent work and checkpoint the blocker. A continuation shares the parent's remaining time; after exhaustion stop for an explicit human extension. S25 combines save/feature interactions, S26–S28 validate compatibility, stress and performance, S29 is one last justified candidate, and S30 packages a reviewable local result.
 
 The queue does not authorize global monolith cleanup, a new renderer, 64-bit conversion, AI automation, automatic replacement after full army wipes or new multiplayer stabilization. These would consume time without being required.
 
 ## Conditional reserve packets
 
-| Packet | Trigger | Estimate |
+| Packet | Trigger | Available time |
 | --- | --- | --- |
-| [R01](sessions/R01.md) | Build/native launch dependency unresolved | 120 min |
-| [R02](sessions/R02.md) | Signature/ABI/call boundary unproved | 120 min |
-| [R03](sessions/R03.md) | Bug classification or optimization fidelity unresolved | 120 min |
-| [R04](sessions/R04.md) | Native orders/deletion/routing proof or narrow adapter blocked | 120 min |
-| [R05](sessions/R05.md) | Save identity/lifecycle/reconciliation failure | 120 min |
-| [R06](sessions/R06.md) | Additional measured hotspot needs contract discovery | 120 min |
-| [R07](sessions/R07.md) | One additional proved performance candidate | 120 min |
-| [R08](sessions/R08.md) | Normal fixture generation/final benchmark needs more runtime | 120 min |
+| [R01](sessions/R01.md) | Build/native launch dependency unresolved | Parent remainder only |
+| [R02](sessions/R02.md) | Signature/ABI/call boundary unproved | Parent remainder only |
+| [R03](sessions/R03.md) | Bug classification or optimization fidelity unresolved | Parent remainder only |
+| [R04](sessions/R04.md) | Native orders/deletion/routing proof or narrow adapter blocked | Parent remainder only |
+| [R05](sessions/R05.md) | Save identity/lifecycle/reconciliation failure | Parent remainder only |
+| [R06](sessions/R06.md) | Additional measured hotspot needs contract discovery | Parent remainder only |
+| [R07](sessions/R07.md) | One additional proved performance candidate | Parent remainder only |
+| [R08](sessions/R08.md) | Normal fixture generation/final benchmark needs more runtime | Parent remainder only |
 
-Reserve packets execute at the parent dependency, not as a parallel second project. Record activation and actual elapsed time in status/handoffs. Further repeats must be explicitly numbered, estimated and justified; this prevents optimistic budgets from hiding open-ended research.
+Reserve packets are subdivisions of their actual parent objective, not extra budgets or a parallel project. Their budgets are the remaining parent time, never an additive grant. Activation requires enough remaining parent time including final review/Git; at exhaustion none may start. See execution-control.md. No automatic repeats.
 
 ## Definition of a reviewable completion
 

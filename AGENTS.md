@@ -1,5 +1,11 @@
 # Fork implementation rules
 
+## Controlling priority and budget rule (2026-10-18)
+
+**Measured HPM speed is the primary project goal. Read `planning/execution-control.md` before any execution. It overrides older automatic reserve/continuation instructions in every packet and handoff.** One top-level objective has one cumulative cap (at most 120 minutes), including all descendants, workers, tests, root review, handoff and Git. No agent, renamed packet or fresh chat can reset it. Check the persistent budget guard before every work phase. Assess at 30/60/90 minutes for a 120-minute cap; final 15 minutes are wrap-up only. At exhaustion stop and report incomplete; additional time requires explicit human authorization for a named objective and additional minutes. Blanket permission to continue is not an extension.
+
+S02/R02 is already BUDGET EXHAUSTED / INCOMPLETE; no further native investigation is active. The revised independent next packet is P00, unmodified original-game HPM speed measurement. It does not permit an unverified fork launch or relax native safety. This plan revision does not itself start execution.
+
 Read `planning/README.md`, `planning/requirements.md`, `planning/architecture.md`, and the current packet in `planning/sessions/` before implementation. Read the relevant research document rather than redoing completed discovery. The planning snapshot is 2026-10-17; current source remains the authority after edits.
 
 ## Scope
@@ -11,12 +17,12 @@ Read `planning/README.md`, `planning/requirements.md`, `planning/architecture.md
 
 ## Session execution
 
-1. Run packets serially in numeric order. A packet is complete only when its exit checks pass; partial research is not a completed feature. Conditional packets can be marked SKIPPED with their stated reason.
+1. Run packets serially in the revised README order, including the explicit independent P00 insertion. A packet is complete only when its exit checks pass; partial research is not a completed feature. Conditional packets can be marked SKIPPED with their stated reason.
 2. The user explicitly authorizes parallel agents within a packet. Use the named independent lanes, at most three workers plus the integrator. Do not start a dependent packet concurrently. One agent owns each file; only the integrator edits `V2TechButton.cpp`, shared headers, project files, settings and install order unless ownership is explicitly reassigned.
 3. Prefer new focused modules over a monolith rewrite. Workers submit patches or implement owned new files; the integrator merges and tests once. Parallel agents never control the same live game process or debugger.
-4. Every packet is budgeted at most 120 minutes elapsed, including integration and validation. At 90 minutes in a 120-minute packet, assess progress; reserve the last 15 minutes for validation and handoff. Split expected overruns into the applicable reserve packet or a newly numbered <=120-minute continuation. Never fake completion to fit the estimate.
+4. Enforce the cumulative family cap in `planning/execution-control.md`; reserves consume remaining parent time and never add time. Use `tools/planning/budget_guard.py` and preserve its ledger across resumes. Stop implementation with 15 minutes left; deadline exhaustion requires an honest checkpoint, not another continuation. Safe cleanup is mandatory and any overrun is recorded.
 5. Update `planning/status.md` and create `planning/handoffs/SNN.md` after each packet: commit/worktree state, changed paths, checks and exact results, artifact/save hashes, decisions, remaining unknowns, and the next packet. Keep private game files/logs outside Git.
-6. Implement authorized reversible work without repeatedly asking permission. Ask only for missing decisions that materially block correctness or actions beyond authorization. Do not contact mod authors, publish, or push releases without user authorization.
+6. Implement authorized reversible work without repeatedly asking permission. Ask only for missing decisions that materially block correctness, actions beyond authorization, or an explicit extension of an exhausted cumulative budget. Do not contact mod authors, publish, or push releases without user authorization.
 
 ## Engine work
 

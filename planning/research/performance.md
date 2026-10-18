@@ -1,5 +1,7 @@
 # Performance research and implementation contract
 
+Execution correction (2026-10-18): [P00](../sessions/P00.md) obtains the unmodified original-game HPM speed baseline before further fork-hook research. Read [execution control](../execution-control.md): one cumulative hard cap, no automatic reserve renewal, evidence reuse and measurement-driven candidate selection. Native timing is independent of inactive fork hooks; modified timing still needs a verified active profile. UI speed must be **5**. Existing exact 1836 warm-up/1837 measurement, fidelity and five-run acceptance requirements remain unchanged.
+
 Research date: 2026-10-17. Repository baseline: `4368f434cc33b00e7b3cc4ff2458e1f69a9ec97d`. This document records source inspection and a proposed execution method, not measured performance results. Session IDs below are work packets for integration into the serial master schedule; they are not permission to begin implementation during planning.
 
 ## Target and scope
