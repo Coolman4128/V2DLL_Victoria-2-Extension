@@ -13791,7 +13791,7 @@ static bool InstallD3dCreateDeviceTable(void* object)
     }
 }
 
-static bool InstallD3dDeviceTablePair(void* device)
+static bool InstallD3dStaticDeviceTemplates()
 {
     if (InterlockedCompareExchange(&g_d3dInstallUnavailable, 0, 0) != 0)
         return false;
@@ -13799,8 +13799,7 @@ static bool InstallD3dDeviceTablePair(void* device)
     {
         HMODULE provider = GetModuleHandleA("d3d9.dll");
         const auto backend = MakeCurrentD3dInstallBackend(provider);
-        const auto report = g_d3dInstallTransaction.InstallDeviceTablePair(
-            (std::uint32_t)(DWORD_PTR)device,
+        const auto report = g_d3dInstallTransaction.InstallStaticDeviceTemplates(
             (std::uint32_t)(DWORD_PTR)&HookReset,
             (std::uint32_t)(DWORD_PTR)&HookPresent, backend);
         return D3dInstallResultAvailable(report, false);
@@ -13808,7 +13807,27 @@ static bool InstallD3dDeviceTablePair(void* device)
     catch (const std::bad_alloc&)
     {
         if (InterlockedExchange(&g_d3dInstallUnavailable, 1) == 0)
-            Log("D3D9: device table installer unavailable: allocation failed");
+            Log("D3D9: static device template installer unavailable: allocation failed");
+        return false;
+    }
+}
+
+static bool VerifyD3dStaticDeviceCopy(void* device)
+{
+    if (InterlockedCompareExchange(&g_d3dInstallUnavailable, 0, 0) != 0)
+        return false;
+    try
+    {
+        HMODULE provider = GetModuleHandleA("d3d9.dll");
+        const auto backend = MakeCurrentD3dInstallBackend(provider);
+        const auto report = g_d3dInstallTransaction.VerifyReturnedStaticDevice(
+            (std::uint32_t)(DWORD_PTR)device, backend);
+        return D3dInstallResultAvailable(report, false);
+    }
+    catch (const std::bad_alloc&)
+    {
+        if (InterlockedExchange(&g_d3dInstallUnavailable, 1) == 0)
+            Log("D3D9: returned device copy unavailable: allocation failed");
         return false;
     }
 }
@@ -13826,14 +13845,15 @@ static HRESULT WINAPI HookCreateDevice(
     if (g_settings.patchD3dFpuPreserve)
         flags |= D3DCREATE_FPU_PRESERVE_FLAG;
     ForceImmediatePresent(params);
+    const bool templatesReady = InstallD3dStaticDeviceTemplates();
 
     HRESULT hr = g_realCreateDevice
         ? g_realCreateDevice(self, adapter, type, hwnd, flags, params, outDevice)
         : E_FAIL;
 
-    if (hr >= 0 && outDevice && *outDevice)
+    if (templatesReady && hr >= 0 && outDevice && *outDevice)
     {
-        if (InstallD3dDeviceTablePair(*outDevice))
+        if (VerifyD3dStaticDeviceCopy(*outDevice))
         {
             DWORD interval = 0;
             if (params)

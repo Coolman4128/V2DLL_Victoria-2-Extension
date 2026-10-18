@@ -1,0 +1,15 @@
+# R02w root checkpoint — incomplete
+
+Stopped 2026-10-18T07:20:26.164103-04:00; 5661.164 seconds elapsed from original 05:46:05 EDT start. Parent S02 started 2026-10-17 20:09:43 EDT and has exceeded ten hours across continuations. The user challenged this overrun; root stopped further expansion and opened no next packet. Repeated bounded continuations did not keep the parent within its intended two-hour budget.
+
+The implementation and tests are preserved as an **incomplete, undeployed checkpoint**. No S02 completion or native-profile acceptance is claimed.
+
+Root independently ran the actual-source owned Win32 suite: 23 cases/655 checks/0 failures (private root-independent-01). Luna's two historical entrypoints each report 25 cases/555 checks/0 failures. Root source audit checked all 59 current/staged inputs and frozen helper/default preservation; source changes are limited to static-template transaction integration. Release Win32 build log reports 0 warnings/0 errors, elapsed 8.01 seconds. Root PE/PDB audit verified x86 PE32, all 128 original Lua export name/ordinal pairs, forwarders and all three DLL/PDB GUID/age pairs. Lua51 SHA256 DFB76269686C6F342B2912978CD77E55AF442C45C5AA259792B932DDB9DFDAD0.
+
+Root inspected the separately authorized supported-OS owned SDK run's raw log: native pinned import/factory route; flags0x42 CreateDevice/Reset/recreate HRESULT0, embedded table, native template slots and zero-reference Releases/cleanup. The earlier unmanifested processes used apphelp and failed their strict native gates. The manifested owned process does not certify the original game's manifest, phase or profile. No real provider template was patched.
+
+**Unmet R02w exits:** actual-source hook inheritance through real provider template writes remains unexecuted; final compiled integration audit and comprehensive artifact acceptance were not completed. The disassembly captured order/argument/HRESULT evidence, but is not a completed audit. Proposed inheritance fixture design was never authorized for execution. Manager and native worker subsequently errored on usage limits; Luna completed. No worker remains running. Root owns this checkpoint.
+
+**Parent barriers:** original-game exclusive D3D installation phase/route coverage, transitive HookPresent callbacks, M3 other-thread lifetime exclusion and complete verified-profile startup/controlled launch remain unproved. Production profiles remain Rejected/WITHHELD; S03 remains closed. No new S02 continuation starts without a materially narrower scope and explicit budget reconciliation.
+
+Private inventory: 872 files, `checkpoint-artifacts.json` SHA256 21332DA325688C87CB0618DC4A94FAC61A0612E85F32CFDA476EB826527D86B8. This inventory preserves evidence; it does not turn unreviewed artifacts into accepted results. Private binaries/logs/game files are excluded from Git. No game/debugger/deployment/performance run occurred in R02w. Any eventual speed test must use speed 5 and the prescribed warm-up/year boundaries. MP stabilization remains frozen awaiting user testing.

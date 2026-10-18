@@ -1,6 +1,6 @@
 # Requirements and decisions
 
-Execution priority correction (2026-10-18): **measured HPM speed is the primary project goal**. [Execution control](execution-control.md) imposes one cumulative session cap including every reserve, worker and review; exhaustion stops work and requires an explicit human time extension. First obtain the untouched native HPM baseline in P00; do not spend unbounded time proving inactive fork hooks. This changes execution priority and budget control, not simulation semantics, frozen remedies or the remaining requested feature requirements.
+Execution priority correction (2026-10-18): **measured HPM speed is the primary project goal**. [Execution control](execution-control.md) governs estimate-based timing, with no hard elapsed-time stop. Each session gets at most one timing-only review across all its slices; reviews calibrate future estimates and never add work or change scope. At 2.5x estimate, reduce scope as a separate execution decision and continue. P00 was later skipped by explicit user direction, so its untouched native HPM baseline remains NOT MEASURED; do not spend unbounded time proving inactive fork hooks. This changes execution priority, not simulation semantics, frozen remedies or the remaining requested feature requirements.
 
 Status: approved user requirements translated into an implementation contract; no fork code implemented by the planning task. Last updated 2026-10-17.
 

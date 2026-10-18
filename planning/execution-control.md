@@ -10,6 +10,8 @@ P00 was **SKIPPED BY USER DIRECTION** on 2026-10-18. Its partial OBS intervals r
 
 ## Session clock and review cadence
 
+**A timing review is calibration only, not a work-planning mechanism.** It cannot create investigations, validations, deliverables, or any other work; it cannot expand, reduce, or otherwise change scope. Scope decisions come from the execution rules and the user's instructions, never from a timing review. There may be only one timing review per complete session, however many slices or handoffs it contains.
+
 - There is **no hard two-hour cap** and no time-based refusal to continue. Estimate each focused session, track elapsed work and total family wall time, and keep one cumulative family record across agents, reviews, context changes, and sessions. Do not reset or rename a family to hide elapsed time.
 - Record both session elapsed time and family wall span. Include setup, reading, discovery, failed runs, build, tests, agent coordination/waiting, review, documentation, commit and delivery in task elapsed time. Annotate external approval waits or unrelated idle gaps separately when known; never silently omit them.
 - At **more than two hours in one session**, pause implementation and obtain one independent timing review of the session's elapsed work, repeated effort, blockers, and estimate accuracy. Record timing lessons, then resume the same objective. There is at most one timing review for the entire session, regardless of how many slices, checkpoints, or handoffs it contains; do not review every slice or split a session to trigger another review. The review's only output is timing calibration for future estimates: it must not create tasks, recommend scope changes, or delay resumption.

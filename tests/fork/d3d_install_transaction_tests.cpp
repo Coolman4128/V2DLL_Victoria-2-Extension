@@ -587,6 +587,9 @@ static tDirect3DCreate9 g_realDirect3DCreate9 = nullptr;
 static tD3D9CreateDevice g_realCreateDevice = nullptr;
 static int objectInstallCalls = 0, deviceInstallCalls = 0;
 static std::function<bool(void*)> deviceInstaller;
+static int staticInstallCalls = 0, verifyCopyCalls = 0, callbackStep = 0;
+static std::function<bool()> staticInstaller;
+static std::function<bool(void*)> copyVerifier;
 static void Log(const char*, ...) {}
 static bool InstallD3dCreateDeviceTable(void*) { ++objectInstallCalls; return false; }
 static bool InstallD3dDeviceTablePair(void* device) {
@@ -598,6 +601,7 @@ static bool InstallD3dDeviceTablePair(void* device) {
 
 static UINT observedSdk = 0;
 static DWORD observedFlags = 0;
+static DWORD observedInterval = 0;
 static void* providerReturnedObject = nullptr;
 static void* providerReturnedDevice = nullptr;
 static HRESULT providerDeviceResult = S_FALSE;
@@ -609,9 +613,14 @@ static void* WINAPI ObjectProvider(UINT sdk)
 }
 
 static HRESULT WINAPI DeviceProvider(void*, UINT, UINT, HWND, DWORD flags,
-                                     void*, void** outDevice)
+                                     void* params, void** outDevice)
 {
     observedFlags = flags;
+    observedInterval = params ?
+        *reinterpret_cast<DWORD*>(static_cast<unsigned char*>(params) +
+                                  source_hooks::D3DPRESENT_INTERVAL_OFF) : 0;
+    if (source_hooks::callbackStep == 1)
+        source_hooks::callbackStep = 2;
     if (outDevice) *outDevice = providerReturnedDevice;
     return providerDeviceResult;
 }
@@ -977,37 +986,68 @@ int wmain(int argc, wchar_t** argv)
         Probe probe;
         Check(ApplyImport(group, probe) && ApplyCreate(group, probe, returnedD3d),
               "callback preservation starts after active D3D import/table install");
-        source_hooks::deviceInstaller = [&group, &probe](void* device) {
-            probe.failCas = probe.exchanges + 2;
-            const auto report = group.InstallDeviceTablePair(
-                static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(device)),
-                Address(reinterpret_cast<FARPROC>(&HookReset)),
-                Address(reinterpret_cast<FARPROC>(&HookPresent)), probe.backend);
-            Check(report.state == D3dInstallState::RolledBack,
-                  "actual paired table installer recovers before callback return");
-            return report.state == D3dInstallState::Applied;
-        };
+        source_hooks::g_settings.patchD3dFpuPreserve = true;
+        source_hooks::g_settings.patchD3dNoVsync = true;
         auto* object = source_hooks::HookDirect3DCreate9(32);
         Check(object == &returnedD3d && observedSdk == 32 &&
               source_hooks::objectInstallCalls == 1,
               "actual source preserves native Direct3DCreate9 object on clean installer failure");
         D3DPRESENT_PARAMETERS parameters{};
         parameters.PresentationInterval = 0x12345678;
+        const OwnedObject before = returnedDevice;
+        source_hooks::staticInstaller = [&parameters]() {
+            Check(source_hooks::callbackStep == 0 &&
+                  parameters.PresentationInterval == source_hooks::D3DPRESENT_INTERVAL_IMMEDIATE,
+                  "FPU/interval callback preparation precedes template install");
+            source_hooks::callbackStep = 1;
+            return false;
+        };
         void* device = nullptr;
         providerDeviceResult = S_FALSE;
         const auto hr = source_hooks::HookCreateDevice(&returnedD3d, 1, 2,
             nullptr, 0x10, &parameters, &device);
         Check(hr == S_FALSE && device == &returnedDevice &&
-              source_hooks::deviceInstallCalls == 1 &&
+              source_hooks::staticInstallCalls == 1 &&
+              source_hooks::verifyCopyCalls == 0 &&
+              source_hooks::callbackStep == 2 &&
               (observedFlags & D3DCREATE_FPU_PRESERVE) != 0 &&
-              parameters.PresentationInterval == 0x12345678,
-              "actual source preserves native HRESULT/device/flags on clean table failure");
+              observedInterval == source_hooks::D3DPRESENT_INTERVAL_IMMEDIATE &&
+              returnedDevice.vtable == before.vtable,
+              "actual source preserves native HRESULT/device and prepared flags on clean template failure");
+        source_hooks::staticInstaller = [&parameters]() {
+            Check(source_hooks::callbackStep == 0 &&
+                  parameters.PresentationInterval == source_hooks::D3DPRESENT_INTERVAL_IMMEDIATE,
+                  "static template installation precedes native provider call");
+            source_hooks::callbackStep = 1;
+            return true;
+        };
+        source_hooks::copyVerifier = [&returnedDevice](void* copy) {
+            Check(source_hooks::callbackStep == 2 && copy == &returnedDevice,
+                  "returned-copy verifier follows successful native provider call");
+            source_hooks::callbackStep = 3;
+            return false;
+        };
+        source_hooks::callbackStep = 0;
+        device = nullptr;
+        const auto verified = source_hooks::HookCreateDevice(&returnedD3d, 1, 2,
+            nullptr, 0x10, &parameters, &device);
+        Check(verified == S_FALSE && device == &returnedDevice &&
+              source_hooks::staticInstallCalls == 2 &&
+              source_hooks::verifyCopyCalls == 1 &&
+              source_hooks::callbackStep == 3 &&
+              returnedDevice.vtable == before.vtable,
+              "successful provider result runs read-only postcall copy verification");
         providerDeviceResult = E_FAIL;
+        source_hooks::callbackStep = 0;
         device = nullptr;
         const auto failed = source_hooks::HookCreateDevice(&returnedD3d, 1, 2,
             nullptr, 0x10, &parameters, &device);
-        Check(failed == E_FAIL && source_hooks::deviceInstallCalls == 1,
-              "native device failure returns its HRESULT without installer attempt");
+        Check(failed == E_FAIL && device == &returnedDevice &&
+              source_hooks::staticInstallCalls == 3 &&
+              source_hooks::verifyCopyCalls == 1 &&
+              source_hooks::callbackStep == 2 &&
+              returnedDevice.vtable == before.vtable,
+              "native failure preserves HRESULT/output and skips copy verification");
     }
     else
         Check(false, "recognized D3D fixture case");

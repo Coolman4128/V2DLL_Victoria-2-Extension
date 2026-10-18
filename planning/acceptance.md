@@ -2,7 +2,7 @@
 
 ## Execution acceptance and speed priority
 
-[Execution control](execution-control.md) is mandatory. A session result must report one original cumulative clock/deadline across all descendants, quarter-point decisions, a final-15-minute wrap-up, honest budget exhaustion and scoped Git state. A new packet name does not renew time. No automatic reserve after exhaustion. Native safety/fidelity and the performance thresholds below are unchanged.
+[Execution control](execution-control.md) is mandatory. A session result must report its estimate, actual elapsed time, family wall span, one timing review at most across the whole session, retrospective, next planned scope, and scoped Git state. There is no hard elapsed-time deadline. Timing reviews only calibrate future estimates and never add work or change scope; at 2.5x estimate, scope reduction is a separate execution decision. Native safety/fidelity and the performance thresholds below are unchanged.
 
 P00 measures **original-game HPM**, independently of inactive fork hooks. Its native result is distinct from retained-fixes/candidate acceptance. An accurate first sample validates the procedure; five valid repetitions are needed for a median/spread and threshold comparison. Incomplete repetitions remain incomplete. A speed-first schedule never converts an unverified modified profile into an accepted one.
 

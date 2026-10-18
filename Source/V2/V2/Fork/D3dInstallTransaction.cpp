@@ -448,9 +448,10 @@ struct SlotChange {
 // prepared by the caller before the first protection change. Failed CAS is
 // conservatively treated as possible full exchange, then every attempted slot
 // is checked and recovered in reverse order.
+template<std::size_t N>
 D3dInstallState PatchGroup(const MemoryAccess& memory,std::uint32_t imageSize,
     std::uint32_t imageBase,const D3dInstallBackend& backend,
-    std::array<SlotChange,2>& slots,std::size_t count,
+    std::array<SlotChange,N>& slots,std::size_t count,
     D3dInstallReport& report,bool& historicalExposure,
     bool* stageExposure,long& nextGate) {
     const char* failure=nullptr;
@@ -578,6 +579,17 @@ bool VerifyOwnedTables(const MemoryAccess& memory,std::uint32_t imageSize,
     return true;
 }
 
+bool VerifyStaticTemplateSlots(const MemoryAccess& memory,std::uint32_t imageSize,
+                               std::uint32_t resetHook,std::uint32_t presentHook) {
+    for (const auto table : {kPinnedD3dDeviceTemplateA,kPinnedD3dDeviceTemplateB}) {
+        std::uint32_t reset=0,present=0;
+        if (!ReadSlot(memory,table+4*kD3dDeviceResetSlot,imageSize,reset) ||
+            !ReadSlot(memory,table+4*kD3dDevicePresentSlot,imageSize,present) ||
+            reset!=resetHook || present!=presentHook) return false;
+    }
+    return true;
+}
+
 } // namespace
 
 const D3dInstallExpectation& PinnedD3dInstallExpectation() noexcept {
@@ -640,12 +652,23 @@ D3dInstallReport D3dInstallTransaction::InstallExeImport(
         return reject("EXE IAT slot unreadable",importInstalled_);
     if (importInstalled_) {
         // Initial install authenticated all metadata. Hot retries only check
-        // cached stable provider identity and the current atomic DWORD.
+        // cached stable provider identity and previously owned atomic DWORDs.
         if (!importPublished_ || !providerBase_ || hookCreate9!=hookCreate9_ ||
             activeIatProvider!=hookCreate9_ ||
             backend.providerMemoryBase!=providerBase_ ||
             backend.resolveCreate9(providerBase_)!=originalCreate9_ ||
-            current!=hookCreate9_)
+            current!=hookCreate9_ ||
+            !VerifyOwnedTables(backend.providerMemory,providerImageSize_,providerBase_,
+                createDeviceTables_,createDeviceTableCount_,hookCreateDevice_,
+                deviceTables_,deviceTableCount_,hookReset_,hookPresent_) ||
+            (staticTemplatesInstalled_ &&
+             (!backend.immutableProviderStorage ||
+              !VerifyStaticTemplateSlots(backend.providerMemory,providerImageSize_,
+                                         hookReset_,hookPresent_) ||
+              !backend.immutableProviderStorage(providerBase_,
+                  providerBase_+kPinnedD3dDeviceTemplateA,175u*4u) ||
+              !backend.immutableProviderStorage(providerBase_,
+                  providerBase_+kPinnedD3dDeviceTemplateB,175u*4u))))
             return reject("installed D3D provider or EXE IAT changed",true);
         report.state=D3dInstallState::AlreadyInstalled;
         report.reason="EXE D3D IAT remains installed";
@@ -776,7 +799,10 @@ D3dInstallReport D3dInstallTransaction::InstallCreateDeviceTable(
         importCurrent!=hookCreate9_ ||
         !VerifyOwnedTables(backend.providerMemory,providerImageSize_,providerBase_,
             createDeviceTables_,createDeviceTableCount_,hookCreateDevice_,
-            deviceTables_,deviceTableCount_,hookReset_,hookPresent_))
+            deviceTables_,deviceTableCount_,hookReset_,hookPresent_) ||
+        (staticTemplatesInstalled_ &&
+         !VerifyStaticTemplateSlots(backend.providerMemory,providerImageSize_,
+                                    hookReset_,hookPresent_)))
         return reject("previously owned D3D slot changed or unreadable",true);
     std::uint32_t table=0;
     if (!backend.readPointer(returnedD3dObject,table) ||
@@ -846,6 +872,192 @@ D3dInstallReport D3dInstallTransaction::InstallCreateDeviceTable(
     return report;
 }
 
+D3dInstallReport D3dInstallTransaction::InstallStaticDeviceTemplates(
+    std::uint32_t hookReset,std::uint32_t hookPresent,
+    const D3dInstallBackend& backend) {
+    D3dInstallReport report;
+    report.stage=D3dInstallStage::StaticDeviceTemplates;
+    const auto prior=InterlockedCompareExchange(
+        reinterpret_cast<volatile LONG*>(&gate_),1,0);
+    if (prior==1) {report.state=D3dInstallState::Busy;report.reason="busy";return report;}
+    if (prior==3) {
+        report.state=D3dInstallState::Poisoned;report.reason="poisoned";
+        report.providerReferenceRetained=providerBase_!=0;
+        report.originalsPublished=devicePairPublished_;
+        report.hookPossiblyExposed=anyHookPossiblyExposed_;
+        return report;
+    }
+    if (prior!=0) {report.state=D3dInstallState::Busy;report.reason="gate changing";return report;}
+    GateExit gate{&gate_};
+    report.reason.reserve(512);
+    report.providerReferenceRetained=providerBase_!=0;
+    report.originalsPublished=devicePairPublished_;
+    report.hookPossiblyExposed=anyHookPossiblyExposed_;
+    auto reject=[&](const char* reason,bool poison=false) {
+        report.reason=reason;
+        report.state=poison ? D3dInstallState::Poisoned : D3dInstallState::Rejected;
+        if (poison) gate.next=3;
+        return report;
+    };
+    if (!providerBase_ || !importInstalled_ || !createDeviceTableCount_ ||
+        !hookReset || !hookPresent || hookReset==hookPresent ||
+        !backend.exeMemory.read || backend.exeMemoryBase!=exeBase_ ||
+        !backend.providerMemory.read || !backend.providerMemory.beginWrite ||
+        !backend.providerMemory.restoreProtection ||
+        !backend.immutableProviderStorage || !backend.publishDevicePair ||
+        !backend.compareExchange || backend.providerMemoryBase!=providerBase_)
+        return reject("static-template prerequisites unavailable",staticTemplatesInstalled_);
+    if (deviceTableCount_)
+        return reject("per-device table mode cannot mix with static templates",true);
+    std::uint32_t importCurrent=0;
+    if (!ReadSlot(backend.exeMemory,exeIatRva_,exeImageSize_,importCurrent) ||
+        importCurrent!=hookCreate9_ ||
+        !VerifyOwnedTables(backend.providerMemory,providerImageSize_,providerBase_,
+            createDeviceTables_,createDeviceTableCount_,hookCreateDevice_,
+            deviceTables_,deviceTableCount_,hookReset_,hookPresent_) ||
+        (staticTemplatesInstalled_ &&
+         !VerifyStaticTemplateSlots(backend.providerMemory,providerImageSize_,
+                                    hookReset_,hookPresent_)))
+        return reject("previously owned D3D slot changed or unreadable",true);
+    if (staticTemplatesInstalled_) {
+        if (hookReset_!=hookReset || hookPresent_!=hookPresent ||
+            !VerifyStaticTemplateSlots(backend.providerMemory,providerImageSize_,
+                                       hookReset_,hookPresent_))
+            return reject("installed static template changed",true);
+        for (const auto table : {kPinnedD3dDeviceTemplateA,kPinnedD3dDeviceTemplateB})
+            if (!backend.immutableProviderStorage(providerBase_,providerBase_+table,
+                                                  175u*4u))
+                return reject("installed static template storage changed",true);
+        report.state=D3dInstallState::AlreadyInstalled;
+        report.reason="A/B static device templates remain installed";
+        return report;
+    }
+    DiskPe pe{};
+    IMAGE_DOS_HEADER dos{};
+    if (!ReadRaw(diskBytes_,0,dos) || dos.e_lfanew<0 ||
+        !ReadRaw(diskBytes_,static_cast<std::uint32_t>(dos.e_lfanew),pe.nt))
+        return reject("cached provider snapshot unavailable",true);
+    pe.sectionCount=pe.nt.FileHeader.NumberOfSections;
+    if (pe.sectionCount>kMaxSections) return reject("cached provider sections invalid",true);
+    const auto sectionOffset=static_cast<std::uint64_t>(dos.e_lfanew)+4+
+        sizeof(IMAGE_FILE_HEADER)+pe.nt.FileHeader.SizeOfOptionalHeader;
+    for (std::size_t i=0;i<pe.sectionCount;++i)
+        if (!ReadRaw(diskBytes_,static_cast<std::size_t>(sectionOffset+
+            i*sizeof(IMAGE_SECTION_HEADER)),pe.sections[i]))
+            return reject("cached provider section unreadable",true);
+    std::array<SlotChange,4> slots{};
+    for (std::size_t tableIndex=0;tableIndex<2;++tableIndex) {
+        const auto table=tableIndex ? kPinnedD3dDeviceTemplateB :
+                                      kPinnedD3dDeviceTemplateA;
+        if (!backend.immutableProviderStorage(providerBase_,providerBase_+table,
+                                              175u*4u))
+            return reject("static template is not immutable provider text",
+                          devicePairPossiblyExposed_);
+        const std::uint32_t slotRvas[2]{
+            table+4*kD3dDeviceResetSlot,table+4*kD3dDevicePresentSlot};
+        for (std::size_t method=0;method<2;++method) {
+            auto& slot=slots[tableIndex*2+method];
+            slot.rva=slotRvas[method];
+            slot.hook=method ? hookPresent : hookReset;
+            std::uint32_t current=0;
+            if ((slot.rva&3) || !ReadSlot(backend.providerMemory,slot.rva,
+                                         providerImageSize_,current) ||
+                !ExpectedProviderSlot(diskBytes_,highlowRelocations_,pe,
+                                      providerBase_,slot.rva,slot.original) ||
+                current!=slot.original || current==slot.hook ||
+                !InsideText(current,providerBase_,providerTextRva_,providerTextSize_))
+                return reject("A/B static template baseline or method mismatch",
+                              devicePairPossiblyExposed_);
+        }
+    }
+    if (slots[0].original!=slots[2].original ||
+        slots[1].original!=slots[3].original)
+        return reject("A/B original method tuples differ");
+    if (devicePairPublished_ &&
+        (originalReset_!=slots[0].original ||
+         originalPresent_!=slots[1].original ||
+         hookReset_!=hookReset || hookPresent_!=hookPresent))
+        return reject("published Reset/Present tuple changed",devicePairPossiblyExposed_);
+    if (!devicePairPublished_) {
+        backend.publishDevicePair(slots[0].original,slots[1].original);
+        originalReset_=slots[0].original;
+        originalPresent_=slots[1].original;
+        hookReset_=hookReset;
+        hookPresent_=hookPresent;
+        devicePairPublished_=true;
+    }
+    report.originalsPublished=true;
+    report.state=PatchGroup(backend.providerMemory,providerImageSize_,
+        providerBase_,backend,slots,4,report,anyHookPossiblyExposed_,
+        &devicePairPossiblyExposed_,gate.next);
+    if (report.state==D3dInstallState::Applied) {
+        staticTemplatesInstalled_=true;
+        report.reason="A/B static Reset/Present templates installed";
+    }
+    return report;
+}
+
+D3dInstallReport D3dInstallTransaction::VerifyReturnedStaticDevice(
+    std::uint32_t returnedDevice,const D3dInstallBackend& backend) {
+    D3dInstallReport report;
+    report.stage=D3dInstallStage::ReturnedDeviceCopy;
+    const auto prior=InterlockedCompareExchange(
+        reinterpret_cast<volatile LONG*>(&gate_),1,0);
+    if (prior==1) {report.state=D3dInstallState::Busy;report.reason="busy";return report;}
+    if (prior==3) {
+        report.state=D3dInstallState::Poisoned;report.reason="poisoned";
+        report.providerReferenceRetained=providerBase_!=0;
+        report.originalsPublished=devicePairPublished_;
+        report.hookPossiblyExposed=anyHookPossiblyExposed_;
+        return report;
+    }
+    if (prior!=0) {report.state=D3dInstallState::Busy;report.reason="gate changing";return report;}
+    GateExit gate{&gate_};
+    report.reason.reserve(256);
+    report.providerReferenceRetained=providerBase_!=0;
+    report.originalsPublished=devicePairPublished_;
+    report.hookPossiblyExposed=anyHookPossiblyExposed_;
+    auto reject=[&](const char* reason) {
+        report.reason=reason;
+        report.state=D3dInstallState::Rejected;
+        gate.next=3;
+        return report;
+    };
+    if (!returnedDevice || !staticTemplatesInstalled_ || !providerBase_ ||
+        !backend.readPointer || !backend.providerMemory.read ||
+        !backend.immutableProviderStorage ||
+        !backend.exeMemory.read || backend.exeMemoryBase!=exeBase_ ||
+        backend.providerMemoryBase!=providerBase_ ||
+        returnedDevice>0xffffffffu-0x2F5Cu-4u*kD3dDevicePresentSlot-4u)
+        return reject("returned device or read-only copy prerequisites unavailable");
+    std::uint32_t importCurrent=0;
+    if (!ReadSlot(backend.exeMemory,exeIatRva_,exeImageSize_,importCurrent) ||
+        importCurrent!=hookCreate9_ ||
+        !VerifyOwnedTables(backend.providerMemory,providerImageSize_,providerBase_,
+            createDeviceTables_,createDeviceTableCount_,hookCreateDevice_,
+            deviceTables_,deviceTableCount_,hookReset_,hookPresent_) ||
+        !VerifyStaticTemplateSlots(backend.providerMemory,providerImageSize_,
+                                   hookReset_,hookPresent_))
+        return reject("owned D3D slot changed before returned-device verification");
+    for (const auto source : {kPinnedD3dDeviceTemplateA,kPinnedD3dDeviceTemplateB})
+        if (!backend.immutableProviderStorage(providerBase_,providerBase_+source,
+                                              175u*4u))
+            return reject("owned static template storage changed");
+    std::uint32_t table=0,savedTemplate=0,reset=0,present=0;
+    if (!backend.readPointer(returnedDevice,table) ||
+        !backend.readPointer(returnedDevice+0x2F58u,savedTemplate) ||
+        table!=returnedDevice+0x2F5Cu ||
+        (savedTemplate!=providerBase_+kPinnedD3dDeviceTemplateA &&
+         savedTemplate!=providerBase_+kPinnedD3dDeviceTemplateB) ||
+        !backend.readPointer(table+4u*kD3dDeviceResetSlot,reset) ||
+        !backend.readPointer(table+4u*kD3dDevicePresentSlot,present) ||
+        reset!=hookReset_ || present!=hookPresent_)
+        return reject("returned device did not copy an authenticated A/B hook pair");
+    report.state=D3dInstallState::AlreadyInstalled;
+    report.reason="returned device copied an authenticated A/B hook pair";
+    return report;
+}
+
 D3dInstallReport D3dInstallTransaction::InstallDeviceTablePair(
     std::uint32_t returnedDevice,std::uint32_t hookReset,
     std::uint32_t hookPresent,const D3dInstallBackend& backend) {
@@ -873,6 +1085,8 @@ D3dInstallReport D3dInstallTransaction::InstallDeviceTablePair(
         if (poison) gate.next=3;
         return report;
     };
+    if (staticTemplatesInstalled_)
+        return reject("static-template mode forbids per-device table writes",true);
     if (!returnedDevice) {
         report.state=D3dInstallState::Skipped;
         report.reason="native provider returned no device";
@@ -891,7 +1105,10 @@ D3dInstallReport D3dInstallTransaction::InstallDeviceTablePair(
         importCurrent!=hookCreate9_ ||
         !VerifyOwnedTables(backend.providerMemory,providerImageSize_,providerBase_,
             createDeviceTables_,createDeviceTableCount_,hookCreateDevice_,
-            deviceTables_,deviceTableCount_,hookReset_,hookPresent_))
+            deviceTables_,deviceTableCount_,hookReset_,hookPresent_) ||
+        (staticTemplatesInstalled_ &&
+         !VerifyStaticTemplateSlots(backend.providerMemory,providerImageSize_,
+                                    hookReset_,hookPresent_)))
         return reject("previously owned D3D slot changed or unreadable",true);
     std::uint32_t table=0;
     if (!backend.readPointer(returnedDevice,table) || !table || (table&3) ||

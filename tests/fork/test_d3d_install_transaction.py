@@ -74,8 +74,11 @@ def main() -> None:
     repo = Path(__file__).resolve().parents[2]
     private = Path(os.environ["LOCALAPPDATA"]) / "V2DLLFork" / "R02t" / "luna-test"
     build = (args.build_root or private / datetime.datetime.now().strftime("run-%Y%m%d-%H%M%S-%f")).resolve()
-    if build == repo or repo in build.parents or build.exists() or private.resolve() not in build.parents:
-        raise SystemExit(f"new private build root required under {private}: {build}")
+    r02w_private = Path(os.environ["LOCALAPPDATA"]) / "V2DLLFork" / "R02w" / "luna-tests"
+    if build == repo or repo in build.parents or build.exists() or not any(
+        allowed.resolve() in build.parents for allowed in (private, r02w_private)
+    ):
+        raise SystemExit(f"new private build root required under {private} or {r02w_private}: {build}")
     build.mkdir(parents=True)
 
     source_path = repo / "Source/V2/V2/V2TechButton.cpp"
@@ -123,10 +126,14 @@ def main() -> None:
             object_route.find("InstallD3dCreateDeviceTable(obj)") <
             object_route.rfind("return obj;")):
         raise SystemExit("successful native Direct3DCreate9 object not preserved")
-    if not (device_route.find("g_realCreateDevice(self, adapter, type, hwnd, flags, params, outDevice)") <
-            device_route.find("InstallD3dDeviceTablePair(*outDevice)") <
+    if not (device_route.find("InstallD3dStaticDeviceTemplates()") <
+            device_route.find("g_realCreateDevice(self, adapter, type, hwnd, flags, params, outDevice)") <
+            device_route.find("VerifyD3dStaticDeviceCopy(*outDevice)") <
             device_route.rfind("return hr;")):
-        raise SystemExit("native CreateDevice HRESULT/device not preserved on installer failure")
+        raise SystemExit("static template install must precede native CreateDevice; returned-copy check must follow successful result")
+    if not re.search(r'if \(templatesReady && hr >= 0 && outDevice && \*outDevice\)',
+                     device_route):
+        raise SystemExit("returned-copy check must be gated by native success and object")
 
     vcvars = Path(r"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvarsall.bat")
     if not vcvars.is_file():
@@ -149,7 +156,16 @@ def main() -> None:
         r"^static void\* WINAPI HookDirect3DCreate9\(UINT sdk\)\s*$",
     )
     callbacks = "\n\n".join(block(source, pattern) for pattern in callback_names)
-    callback_fixture.write_text(fixture_text.replace(marker, callbacks), encoding="utf-8")
+    fixture_text = fixture_text.replace(
+        "static bool InstallD3dDeviceTablePair(void* device)",
+        "[[maybe_unused]] static bool InstallD3dDeviceTablePair(void* device)")
+    static_stubs = (
+        "static bool InstallD3dStaticDeviceTemplates() { ++staticInstallCalls; "
+        "return staticInstaller ? staticInstaller() : false; }\n"
+        "static bool VerifyD3dStaticDeviceCopy(void* device) { ++verifyCopyCalls; "
+        "return copyVerifier ? copyVerifier(device) : false; }\n")
+    callback_fixture.write_text(fixture_text.replace(marker, static_stubs + callbacks),
+                                encoding="utf-8")
     surrogate_source = build / "d3d_surrogate.cpp"
     surrogate_dll = build / "d3d_surrogate.dll"
     surrogate_source.write_text(r'''

@@ -16,6 +16,8 @@ constexpr std::uint32_t kPinnedD3dImageSize = 0x179000;
 constexpr std::uint32_t kD3dCreateDeviceSlot = 16;
 constexpr std::uint32_t kD3dDeviceResetSlot = 16;
 constexpr std::uint32_t kD3dDevicePresentSlot = 17;
+constexpr std::uint32_t kPinnedD3dDeviceTemplateA = 0x1008;
+constexpr std::uint32_t kPinnedD3dDeviceTemplateB = 0x2034;
 
 struct D3dInstallExpectation {
     std::uint32_t exeImageSize = 0;
@@ -36,7 +38,8 @@ struct D3dInstallExpectation {
 const D3dInstallExpectation& PinnedD3dInstallExpectation() noexcept;
 
 enum class D3dCasResult { Swapped, Mismatch, Failed };
-enum class D3dInstallStage { ExeImport, CreateDeviceTable, DeviceTablePair };
+enum class D3dInstallStage { ExeImport, CreateDeviceTable, DeviceTablePair,
+                             StaticDeviceTemplates, ReturnedDeviceCopy };
 enum class D3dInstallState {
     Skipped, Rejected, Busy, Applied, AlreadyInstalled, RolledBack,
     RollbackFailed, Poisoned
@@ -62,8 +65,9 @@ struct D3dInstallReport {
 // transaction hashes AND parses that same buffer before any write. It must
 // never invoke D3D engine code. immutableProviderStorage checks the table's
 // current committed RX MEM_IMAGE storage belongs to the retained provider;
-// writable .data/heap tables fail. readPointer reads one caller-owned COM
-// object's vptr without retaining the object. Publication callbacks expose
+// writable .data/heap tables fail. readPointer makes a VQ-gated transient
+// DWORD read from a caller-owned COM object or its copied table; it retains
+// no object pointer. Publication callbacks expose
 // originals before any associated hook slot CAS and never clear them after
 // possible exposure. CAS atomically compares one aligned x86 DWORD.
 struct D3dInstallBackend {
@@ -101,6 +105,17 @@ public:
         const D3dInstallExpectation& expected);
     D3dInstallReport InstallCreateDeviceTable(std::uint32_t returnedD3dObject,
         std::uint32_t hookCreateDevice,const D3dInstallBackend& backend);
+    // Called before the original CreateDevice. The four journal addresses are
+    // authenticated provider-image A/B template slots, never returned COM memory.
+    D3dInstallReport InstallStaticDeviceTemplates(std::uint32_t hookReset,
+        std::uint32_t hookPresent,const D3dInstallBackend& backend);
+    // Read-only check during the CreateDevice callback; no returned pointer is
+    // stored across the call or save/load/Release boundary.
+    D3dInstallReport VerifyReturnedStaticDevice(std::uint32_t returnedDevice,
+        const D3dInstallBackend& backend);
+    // Historical image-backed table contract retained for its owned tests.
+    // The production HookCreateDevice uses static templates instead and never
+    // journals a returned device's MEM_PRIVATE table.
     D3dInstallReport InstallDeviceTablePair(std::uint32_t returnedDevice,
         std::uint32_t hookReset,std::uint32_t hookPresent,
         const D3dInstallBackend& backend);
@@ -120,6 +135,7 @@ private:
     bool importPublished_ = false;
     bool createDevicePublished_ = false;
     bool devicePairPublished_ = false;
+    bool staticTemplatesInstalled_ = false;
     bool anyHookPossiblyExposed_ = false;
     bool createDevicePossiblyExposed_ = false;
     bool devicePairPossiblyExposed_ = false;
