@@ -2,6 +2,20 @@
 
 Observed 2026-10-17. Planning work did not launch Victoria 2/EU4, build V2DLL, replace the game's DLL, or change the executable.
 
+## Workload correction: HPM
+
+The user corrected the intended mod from GHM to **Historical Project Mod (HPM)** on2026-10-17 and explicitly authorized downloading it. Official upstream: https://github.com/arkhometha/Historical-Project-Mod ; latest published release selected: **0.4.6.3**, tag commit `6819d3214d6787247ce7558fa7376fc591cadc92`. Download/additive installation completed20:58:23 EDT; [S01HPM](../sessions/S01HPM.md) native baseline subsequently completed and was independently accepted at22:58:55.953 EDT. Existing GHM remains historical evidence and does not establish HPM compatibility or performance.
+
+HPM installation evidence:
+
+- Official release: https://github.com/arkhometha/Historical-Project-Mod/releases/tag/0.4.6.3 ; archive from the corresponding GitHub tag, not a moving development branch.
+- Archive `HPM-0.4.6.3.zip`: 86,996,470 bytes; SHA-256 `38D6541F160C14CFBC8560A31E3BD0F35735A3E4ACD23DCD1BA6D0E701E51CB2`.
+- Retained download, extracted content, upstream metadata and verification manifest: `%LOCALAPPDATA%/V2DLLForkResearch/HPM-0.4.6.3/`, outside Git.
+- All 8,441 archive files matched exact sizes and Git blob identities from the pinned upstream tree. Archive paths were validated before writing; no executable/DLL/script installer was present.
+- Installed only `mod/HPM/` and `mod/HPM.mod`; both were absent beforehand. GHM and game binaries were preserved. Installed 8,432 files / 267,006,715 bytes; every destination SHA-256 matched. Independent destination reread confirmed exact file set and all hashes, zero missing/extra/mismatched files.
+- Descriptor displays `Historical Project Mod 0.4.6`, selects `path = "mod/HPM"`, `user_dir = "HPM"`, `replace_path = "history/provinces"`. The shortened descriptor name does not override the pinned 0.4.6.3 release identity.
+- Native HPM original-Lua menu and fresh paused Belgium,January1,1836 setup: **PASS, independently reviewed actual captures**, with user manual setup after supported secondary-monitor pointer input failed. Window remained wholly on physical DISPLAY2; user's game/display untouched. Exact HPM launch argument/pinned install/separate generated HPM userdata establish selection; no custom menu logo inferred. Supported Alt+F4 exited0;17preexisting files and exact12save set unchanged, no restoration/overwrite required. New HPM userdata897files/357,934,882bytes retained separately outside Git. Full results/limitations and45anchor private index SHA-256 `D81540F6072BBB79BAA7797963B9F388E864CB1C4CE2DC5FD6E2DE5F2EFA2A5C`: [S01HPM results](../results/S01HPM.md), [handoff](../handoffs/S01HPM.md). Gameplay compatibility, fork-candidate behavior and performance remain **NOT RUN**; no1837timing claim. Historical GHM receiver observations do not satisfy HPM native-hook gates.
+
 ## Hardware and tools
 
 - CPU: AMD Ryzen 7 9700X, 8 physical cores / 16 logical processors (Win32_Processor).
