@@ -14,4 +14,4 @@ Next eligible action: continue only within the existing S02 acceptance gates if 
 
 ## Git delivery
 
-Commit and remote state will be recorded after the scoped documentation changes are verified. A commit records this bounded static result only; it does not certify S02 acceptance.
+The scoped result/status/handoff were committed as `c1d007c30900a40c92712c08c9d391f01189bb29`, pushed to `origin/main`, and independently verified to match. No unrelated edits or private artifacts were staged. Existing untracked `tests/fork/__pycache__/` and `tools/planning/__pycache__/` were preserved. This delivery records only the bounded static result; it does not certify S02 acceptance.
