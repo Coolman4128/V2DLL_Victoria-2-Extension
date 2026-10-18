@@ -1,6 +1,6 @@
 # S02 quiescence decision — blocked
 
-Session: `S02-20261018-quiescence-decision`; 30-minute estimate. The precise elapsed and S02 family wall figures are recorded in `%LOCALAPPDATA%/V2DLLFork/S02/budget-ledger.json`. This was a bounded source/evidence decision reusing accepted R02u/v/w evidence; no implementation, tests, build, game/debugger run, deployment or benchmark occurred.
+Session: `S02-20261018-quiescence-decision`; 30-minute estimate, **2.374 minutes actual**, S02 family wall **1169.604 minutes (19.493 hours)** at clock close. Its one timing-only review found the narrow source decision took 12.6x less than estimated because it reused indexed evidence and required only source tracing plus one confirmation; this calibrates future estimates to separate source/evidence review from runtime validation and adds no work or scope. Full record: `%LOCALAPPDATA%/V2DLLFork/S02/budget-ledger.json`. No implementation, tests, build, game/debugger run, deployment or benchmark occurred.
 
 ## Decision
 
