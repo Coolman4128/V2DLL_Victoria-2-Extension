@@ -62,7 +62,19 @@ def check_family(data, family, packet, operation_minutes, now):
     start = datetime.fromisoformat(record["started_utc"])
     deadline = datetime.fromisoformat(record["deadline_utc"])
     minutes = record["authorized_minutes"]
-    if start.tzinfo is None or deadline.tzinfo is None or not 15 < minutes <= 120:
+    extension = record.get("extension")
+    extra = 0
+    if extension is not None:
+        if family != "P00" or not isinstance(extension, dict):
+            raise ValueError("Invalid extension record; reconcile it")
+        extra = extension.get("minutes", 0)
+        if (not isinstance(extra, int) or extra <= 0 or
+                not isinstance(extension.get("authorization"), str) or
+                not extension["authorization"].strip()):
+            raise ValueError("Extension requires positive minutes and an authorization record")
+        if minutes != 120 + extra:
+            raise ValueError("Extension total does not match the original 120-minute P00 cap")
+    if start.tzinfo is None or deadline.tzinfo is None or not 15 < minutes <= 120 + extra:
         raise ValueError("Invalid clock/cap; reconcile ledger")
     if deadline != start + timedelta(minutes=minutes) or now < start:
         raise ValueError("Inconsistent or reversed clock; stop and reconcile")

@@ -2,11 +2,11 @@
 
 ## Active packet — P00 (2026-10-18)
 
-State: **INCOMPLETE** - OBS video PTS established an exact boundary method. Root independently verified three Jan-1-to-Jan-1 intervals: run02 47.166667 s, run04 150.033333 s, run05 69.900000 s, all at 30 fps. Runs04/05 include measured-year event pauses and are reported separately from the unpaused run02. Two runs were excluded. Five comparable repetitions and capture-overhead calibration were not obtained. Original P00 family clock remains `2026-10-18T12:50:54.264670Z` to `2026-10-18T14:50:54.264670Z`. See [P00 handoff](handoffs/P00.md) and private `%LOCALAPPDATA%/V2DLLFork/P00/sol-runs/`. S02 remains exhausted; modified-build sessions remain closed.
+State: **INCOMPLETE** - Root verified three OBS PTS intervals: run02 47.166666 s with no measured-year event pause; run04 150.033334 s and run05 69.900000 s, each with one native event pause. All three Jan-1 boundaries are visually verified and have no timestamp gaps inside the measured intervals. OBS capture overhead remains unquantified; only one interval is an unpaused sample, so five comparable repetitions are unmet. User authorized a 30-minute extension on the original P00 family clock: start `2026-10-18T12:50:54.264670Z`, extended deadline `2026-10-18T15:20:54.264670Z`; guard reports wrap-up only. S02 remains exhausted and later packets gated.
 
 ## Controlling current state — 2026-10-18 plan repair
 
-**P00 is INCOMPLETE and stopped within its original family clock. S02/R02 remains BUDGET EXHAUSTED / INCOMPLETE**, more than ten cumulative wall-clock hours from 2026-10-17 20:09:43 EDT through R02w. Three intervals are now independently boundary-verified; two include measured-year event pauses, only one is an unpaused run, and five comparable repetitions plus capture-overhead calibration remain unfinished. Dependent modified-build sessions remain gated.
+**P00 remains INCOMPLETE after a user-authorized 30-minute extension on its original family clock; no clock reset.** Original start `2026-10-18T12:50:54.264670Z`, extended deadline `2026-10-18T15:20:54.264670Z`. At the latest guard check, 145.668 minutes had elapsed and 4.332 remained (wrap-up only). Three intervals are independently boundary-verified, but only one is unpaused; the two event-paused runs are separate observations. Five comparable repetitions and capture-overhead calibration remain unfinished. Dependent modified-build sessions remain gated.
 
 S01/S01HPM accepted. Latest delivered R02v commit is `8e1216a080c6335d43faa501dd3b5c234249d8bc`. R02w is uncommitted and incomplete: source/tests/build/export/PDB checks have finite passing evidence; real patched-provider inheritance and final compiled acceptance remain unfinished. Profiles remain Rejected/WITHHELD. HPM speed is NOT MEASURED; requested army features are NOT STARTED; MP stabilization remains frozen awaiting user testing.
 
@@ -36,7 +36,7 @@ At each handoff add/update one row per executed packet: ID, state, actual elapse
 
 | Packet | State | Actual elapsed | Evidence | Next action |
 | --- | --- | --- | --- | --- |
-| P00 | INCOMPLETE - 3 full candidate recordings; 1 exact interval root-verified; 5-run exit unmet | 115m elapsed; original family deadline unchanged | [handoff](handoffs/P00.md), [packet](sessions/P00.md), private `%LOCALAPPDATA%/V2DLLFork/P00/sol-runs/` | Continue only with explicit extension for this named P00 objective; S02 and dependent packets stay closed |
+| P00 | INCOMPLETE - 3 boundary-verified intervals (1 unpaused, 2 event-paused); five-run exit unmet | 145.7m elapsed of 150m; 4.3m remained at last guard | [handoff](handoffs/P00.md), [packet](sessions/P00.md), private `%LOCALAPPDATA%/V2DLLFork/P00/sol-runs/` | P00 remains gated pending a further explicit extension; do not start S02 or dependent packets |
 | S01 | COMPLETE - independently accepted by root | About 8 active minutes plus unclocked setup; approval wait excluded | [handoff](handoffs/S01.md), [results](results/S01.md) | S02 eligible |
 | S01HPM | COMPLETE - independently accepted by root | 14m58.443s through final manager handoff; root acceptance22:58:55.953 EDT | [handoff](handoffs/S01HPM.md), [results](results/S01HPM.md) | Continue S02 compatibility work; S03 remains closed |
 | S02 | BUDGET EXHAUSTED / INCOMPLETE | More than ten cumulative wall-clock hours through R02w; 120-minute cap exceeded | [control](execution-control.md), [R02w disposition](execution-control.md#s02-incident-and-recovery-state) | No further S02/R02 work without explicit human time grant; modified profiles WITHHELD |
