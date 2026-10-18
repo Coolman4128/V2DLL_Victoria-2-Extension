@@ -370,6 +370,8 @@ using namespace fork_startup;
 ImageFixture* routeImage = nullptr;
 StartupFacts routeFacts{};
 bool routeAuthorizedControl = false;
+bool installResult = true;
+bool installThrows = false;
 unsigned reportCalls = 0, disableCalls = 0, logDirCalls = 0;
 unsigned criticalCalls = 0, skipCalls = 0, fpuCalls = 0, installCalls = 0;
 unsigned logCalls = 0, threadPostCalls = 0, readyCalls = 0;
@@ -391,7 +393,11 @@ void TestInitializeCriticalSection(CRITICAL_SECTION*) {
 }
 void TestReportUnavailableCrashWatch() { ++skipCalls; routeOrder.push_back("skip"); }
 void TestPinFpu() { ++fpuCalls; routeOrder.push_back("fpu"); }
-bool TestInstall() { ++installCalls; routeOrder.push_back("install"); return true; }
+bool TestInstall() {
+    ++installCalls; routeOrder.push_back("install");
+    if (installThrows) RaiseException(0xE0000001u, 0, 0, nullptr);
+    return installResult;
+}
 void TestLog(const char*, ...) { ++logCalls; routeOrder.push_back("log"); }
 LONG TestInterlockedExchange(volatile LONG* target, LONG value) {
     *target = value;
@@ -414,6 +420,8 @@ void ResetRouteCounters() {
     reportCalls = disableCalls = logDirCalls = criticalCalls = skipCalls = 0;
     fpuCalls = installCalls = logCalls = threadPostCalls = readyCalls = 0;
     routeOrder.clear();
+    installResult = true;
+    installThrows = false;
     g_selfModule = reinterpret_cast<HMODULE>(static_cast<std::uintptr_t>(0x1234));
     g_logCsInit = false;
     g_dllReady = 37;
@@ -527,6 +535,24 @@ void TestDllMainRejectionRoute() {
     Check(g_selfModule == reinterpret_cast<HMODULE>(static_cast<std::uintptr_t>(0x4321)) &&
         g_logCsInit && g_dllReady == 1,
         "authorized sensitivity control publishes legacy globals");
+
+    // This fabricated Authorized path tests failure reporting only; the
+    // production positive profile remains Withheld and installs nothing.
+    ResetRouteCounters();
+    routeAuthorizedControl = true;
+    installResult = false;
+    Check(DllMain(reinterpret_cast<HMODULE>(static_cast<std::uintptr_t>(0x4321)),
+        DLL_PROCESS_ATTACH, reinterpret_cast<void*>(1)) == TRUE &&
+        installCalls == 1 && g_dllReady == 0,
+        "failed legacy install keeps DLL attached without publishing readiness");
+
+    ResetRouteCounters();
+    routeAuthorizedControl = true;
+    installThrows = true;
+    Check(DllMain(reinterpret_cast<HMODULE>(static_cast<std::uintptr_t>(0x4321)),
+        DLL_PROCESS_ATTACH, reinterpret_cast<void*>(1)) == TRUE &&
+        installCalls == 1 && g_dllReady == 0,
+        "caught legacy install exception keeps DLL attached without publishing readiness");
     routeAuthorizedControl = false;
 }
 

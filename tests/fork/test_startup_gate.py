@@ -72,7 +72,7 @@ def source_route_checks(source: str) -> None:
     first_old_effect = min(dllmain.index(token, attach) for token in (
         "DisableThreadLibraryCalls(hModule)", "g_selfModule = hModule", "InitLogDir();",
         "InitializeCriticalSection(&g_logCs)", "ReportUnavailableCrashWatch();", "PinFpu();",
-        "Install();", "Log(", "InterlockedExchange(&g_dllReady, 1)"))
+        "Install();", "Log(", "InterlockedExchange(&g_dllReady, ok ? 1 : 0)"))
     if not (gate < rejection < return_false < first_old_effect):
         raise SystemExit("production startup gate does not reject before all old attach effects")
     attach_body = dllmain[attach:]
@@ -83,7 +83,7 @@ def source_route_checks(source: str) -> None:
     preserved = [
         "DisableThreadLibraryCalls(hModule)", "g_selfModule = hModule", "InitLogDir();",
         "InitializeCriticalSection(&g_logCs)", "ReportUnavailableCrashWatch();", "PinFpu();",
-        "ok = Install();", "InterlockedExchange(&g_dllReady, 1)"
+        "ok = Install();", "InterlockedExchange(&g_dllReady, ok ? 1 : 0)"
     ]
     positions = [dllmain.index(token, return_false) for token in preserved]
     if positions != sorted(positions):

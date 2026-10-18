@@ -28,10 +28,14 @@
 #include <xmmintrin.h>
 #include <pmmintrin.h>
 #include <vector>
+#include <new>
+#include <utility>
 
 #include "lua51_exports.h"
 #include "V2DLL_Shared.h"
 #include "Fork/ViewsBoundary.h"
+#include "Fork/LegacyByteTransaction.h"
+#include "Fork/Win32Memory.h"
 #include "Fork/StartupGate.h"
 #include "minhook/src/HDE/hde32.h"
 
@@ -5096,38 +5100,79 @@ static bool PreflightExePatches()
 }
 
 
-static void InstallExePatches()
+static DWORD ResolveExePatchRva(const BytePatch& bp)
 {
-    for (int i = 0; i < EXE_PATCH_COUNT; ++i)
+    DWORD rva = 0;
+    __try { rva = bp.rva ? bp.rva : FileOffsetToRVA(bp.fileOffset); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { rva = 0; }
+    return rva;
+}
+
+static const char* LegacyByteStateName(fork_boundary::LegacyByteState state)
+{
+    switch (state)
     {
-        BytePatch& bp = EXE_PATCHES[i];
+    case fork_boundary::LegacyByteState::Rejected: return "rejected";
+    case fork_boundary::LegacyByteState::Skipped: return "skipped";
+    case fork_boundary::LegacyByteState::Applied: return "applied";
+    case fork_boundary::LegacyByteState::RolledBack: return "rolled back";
+    case fork_boundary::LegacyByteState::RollbackFailed: return "rollback failed";
+    }
+    return "invalid";
+}
 
-        if (!bp.enabled)
-            continue;
-
-        DWORD rva = bp.rva ? bp.rva : FileOffsetToRVA(bp.fileOffset);
-        if (!rva)
+static bool InstallExePatches()
+{
+    try
+    {
+        // The startup gate authenticates the supported EXE; R02p checked this
+        // same effective table before any Install-side native patch. Recheck
+        // current mapping/ranges here because earlier installers have run.
+        std::vector<fork_boundary::LegacyByteSite> sites;
+        sites.reserve(EXE_PATCH_COUNT);
+        for (int i = 0; i < EXE_PATCH_COUNT; ++i)
         {
-            Log("Patch '%s': смещение %06X вне секций", bp.name, bp.fileOffset);
-            continue;
+            const BytePatch& bp = EXE_PATCHES[i];
+            fork_boundary::LegacyByteSite site;
+            site.name = bp.name ? bp.name : "";
+            site.enabled = bp.enabled;
+            if (bp.enabled)
+            {
+                const DWORD rva = ResolveExePatchRva(bp);
+                if (bp.len <= 0 || bp.len > (int)sizeof(bp.expect) ||
+                    bp.len > (int)sizeof(bp.replace) || !rva || !g_imageSize ||
+                    rva >= g_imageSize || (DWORD)bp.len > g_imageSize - rva ||
+                    !ReadableExePatchSpan(rva, (DWORD)bp.len))
+                {
+                    Log("Byte table unavailable: '%s' has invalid/unreadable image span", bp.name);
+                    return false;
+                }
+                site.rva = rva;
+                site.expected.assign(bp.expect, bp.expect + bp.len);
+                site.replacement.assign(bp.replace, bp.replace + bp.len);
+            }
+            sites.push_back(std::move(site));
         }
 
-        unsigned char* at = (unsigned char*)(g_base + rva);
-
-        if (memcmp(at, bp.expect, bp.len) != 0)
+        const auto memory = fork_boundary::MakeWin32ImageMemory(g_base, g_imageSize);
+        const auto report = fork_boundary::InstallLegacyByteTable(sites, g_imageSize, memory);
+        Log("Byte table transaction: %s; enabled=%u disabled=%u; %s",
+            LegacyByteStateName(report.state), (unsigned)report.enabledCount,
+            (unsigned)report.skippedCount, report.reason.c_str());
+        for (size_t i = 0; i < report.sites.size(); ++i)
         {
-            Log("Patch '%s': сигнатура не совпала - не патчим", bp.name);
-            continue;
+            if (report.sites[i].state != fork_boundary::LegacyByteSiteState::Applied &&
+                report.sites[i].state != fork_boundary::LegacyByteSiteState::Skipped)
+                Log("Byte table row '%s': %s", report.sites[i].name.c_str(),
+                    report.sites[i].reason.c_str());
         }
-
-        DWORD oldProtect = 0;
-        if (!VirtualProtect(at, bp.len, PAGE_EXECUTE_READWRITE, &oldProtect))
-            continue;
-
-        memcpy(at, bp.replace, bp.len);
-        VirtualProtect(at, bp.len, oldProtect, &oldProtect);
-
-        Log("Patch '%s': применён на rva %06X", bp.name, rva);
+        return report.state == fork_boundary::LegacyByteState::Applied ||
+            report.state == fork_boundary::LegacyByteState::Skipped;
+    }
+    catch (const std::bad_alloc&)
+    {
+        Log("Byte table unavailable: transaction allocation failed before patching");
+        return false;
     }
 }
 
@@ -25228,7 +25273,11 @@ static bool Install()
     // Каждая запись таблицы уважает своё собственное BytePatch::enabled
     // (правится ключами PATCH_<ИМЯ> в ini), поэтому вызов сам по себе
     // безусловный.
-    InstallExePatches();
+    if (!InstallExePatches())
+    {
+        Log("Byte table transaction failed; later legacy installers skipped; earlier installer effects may remain");
+        return false;
+    }
 
     if (g_settings.armyBetterReinforceOnAlliedOwnedLand)
         InstallOccupiedReinforceSplit();
@@ -26503,7 +26552,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID reserved)
             Log("Legacy install aborted by exception; partial legacy patch state is possible");
         }
         Log("DllMain: attach, legacy install sequence returned=%d (not feature availability)", (int)ok);
-        InterlockedExchange(&g_dllReady, 1);
+        InterlockedExchange(&g_dllReady, ok ? 1 : 0);
     }
     else if (reason == DLL_PROCESS_DETACH)
     {
